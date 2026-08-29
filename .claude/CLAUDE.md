@@ -29,7 +29,8 @@ This repository contains a modular prototype for distinguishing AI-generated ima
 
 - `src/explainability/`: Grad-CAM and ViT attention heatmap visualizers, used by the inference pipeline (`predict.py --save_heatmap`, `app.py`).
 - `training/`: Everything the training pipeline owns, isolated from the inference pipeline:
-- `train.py` / `evaluate.py`: Entry-point CLIs (fit a checkpoint / run the robustness benchmark).
+- `train_semantic.py` / `train_frequency.py`: independent entry-point CLIs, one per feature stream, each training its own stream + a small head and saving its own checkpoint. Deliberately separate files (no shared module between them) so two teammates can work on a stream each at once.
+- `evaluate.py`: entry-point CLI running the robustness benchmark against the fused `DetectorPipeline`.
 - `data/`: Dataset loaders (`AIGCDataset`) and Albumentations robustness transform pipelines (`RobustnessTransforms`). Training-only — never imported by `predict.py` or `app.py`.
 - `evaluation/`: Automated benchmark runner (`RobustnessBenchmark`) and metrics testing performance across degradation spectrums. Training-only.
 
@@ -59,14 +60,18 @@ pytest tests/test_evaluation.py
 
 ### Training
 
-Run from the repo root as a module so `training/` scripts can import `src/`:
+Each feature stream trains independently, from the repo root as a module so
+`training/` scripts can import `src/`:
 
 ```bash
-# Train detector using default config
-python -m training.train --config configs/base_config.yaml
+# Train the semantic stream (saves checkpoints/semantic_stream.pt)
+python -m training.train_semantic --config configs/base_config.yaml
 
-# Train with specific batch size and learning rate
-python -m training.train --config configs/base_config.yaml --batch_size 32 --lr 1e-4
+# Train the frequency stream (saves checkpoints/frequency_stream.pt)
+python -m training.train_frequency --config configs/base_config.yaml
+
+# Both accept the same flags, e.g. batch size and learning rate
+python -m training.train_semantic --config configs/base_config.yaml --batch_size 32 --lr 1e-4
 
 ```
 

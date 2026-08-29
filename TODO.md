@@ -15,24 +15,31 @@ follow.
 - [x] `predict.py` — single-image / directory CLI inference, JSON output
 - [x] `app.py` — Gradio frontend with placeholder saliency overlay
 - [x] `.gitignore`, `README.md` setup guide
+- [x] `training/data/augmentations.py` — `RobustnessTransforms` (Albumentations):
+      JPEG compression (Q 30-90), Gaussian Blur (sigma 0.5-2.0), Downscale
+      rescaling (0.25x-0.5x), Gaussian Noise, Color Jitter, 80% Center Crop, all
+      before `ToTensorV2()`. Train mode (stochastic stack) and eval mode
+      (isolated transform + severity, for degradation curves).
+- [x] `training/data/dataset.py` — `AIGCDataset(Dataset)`, manifest-CSV mode or
+      synthetic in-memory mode when no manifest is given.
+- [x] `training/data/datamodule.py` — plain-PyTorch `AIGCDataModule`
+      (train/val split, `DataLoader`s from `configs/base_config.yaml`) — not
+      Lightning yet, see §3.
+- [x] `configs/base_config.yaml`, `configs/augmentations.yaml` populated.
+- [x] `training/logging_utils.py` + logging throughout the data path for
+      debugging (per-sample augmentation params at DEBUG, dataset/datamodule
+      sizes at INFO).
+- [x] `tests/test_data.py` — minimal critical-path tests: augmentation output
+      shape contract, dataset label/shape contract, and a smoke test per
+      stream-training script (`train_semantic.py`/`train_frequency.py`,
+      including checkpoint-file creation).
 
-## 1. Data & Augmentations (`training/data/`)
+## 1. Data & Augmentations (`training/data/`) — remaining
 
-- [ ] `dataset.py` — implement `AIGCDataset(Dataset)` reading a manifest CSV
-      (`image_path,label`; `0=Real`, `1=AI-Generated`), returning `[3, 512, 512]`
-      ImageNet-normalized tensors.
-- [ ] `augmentations.py` — implement `RobustnessTransforms` (Albumentations) with
-      JPEG compression (Q 30-90), Gaussian Blur (sigma 0.5-2.0), Rescaling
-      (0.25x-0.5x), Gaussian Noise, Color Jitter, and 80% Center Crop. Apply
-      augmentations **before** `ToTensorV2()`.
-- [ ] `datamodule.py` — PyTorch/Lightning `DataLoader` wrapper (train/val/test
-      splits, batch size + workers from `configs/base_config.yaml`).
-- [ ] Populate `configs/base_config.yaml` and `configs/augmentations.yaml` (both
-      currently empty placeholders).
 - [ ] Source or assemble the real/AI-generated image dataset and build the
-      manifest CSV.
-- [ ] `tests/test_data.py` — unit tests for dataset shape/label contracts and
-      each augmentation.
+      manifest CSV (currently only exercised via the synthetic fallback).
+- [ ] Broaden `tests/test_data.py` beyond the minimal critical-path set (e.g.
+      manifest-CSV loading, eval-mode isolation, severity bounds) once useful.
 
 ## 2. Model Backbones (`src/models/`)
 
@@ -51,20 +58,33 @@ follow.
 - [ ] `tests/test_models.py` — shape/contract tests for each stream, fusion, and
       `DetectorPipeline`, including a frozen-weights determinism test.
 
-## 3. Training (`training/train.py`)
+## 3. Training (`training/train_semantic.py`, `training/train_frequency.py`)
 
-- [ ] Implement the PyTorch Lightning training loop: optimizer, LR schedule,
-      loss (BCE on `logit`), checkpointing, logging.
-- [ ] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`.
-- [ ] Decide freeze/fine-tune strategy for the semantic and frequency backbones.
-- [ ] Produce a first trained checkpoint under `checkpoints/`.
+Each stream trains independently (own script, own checkpoint, no shared file)
+so two teammates can research a stream each in parallel; neither touches
+`fusion.py` yet.
+
+- [x] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`, plus
+      a mock loop (real forward/BCE-loss/backward/optimizer.step over a few
+      `--steps`) that proves the data flow end-to-end, for each stream.
+- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt`,
+      `checkpoints/frequency_stream.pt`) — currently mock weights, not yet
+      meaningful.
+- [ ] Implement the full (PyTorch Lightning or plain) per-stream training
+      loop: LR schedule, multi-epoch training, real loss curves.
+- [ ] Once both streams are validated individually: joint fine-tuning of the
+      fused `DetectorPipeline` (`fusion.py` + both streams together), and
+      wiring `training/evaluate.py` to load the two per-stream checkpoints
+      into it instead of running a fresh random-init model.
 
 ## 4. Robustness Evaluation (`training/evaluation/`, `training/evaluate.py`)
 
+- [x] `evaluate.py` — CLI wiring `--checkpoint` + `--config`, running a mock
+      sweep through the real eval-mode `RobustnessTransforms` and logging
+      shapes/probabilities per severity (no real metrics yet).
 - [ ] `metrics.py` — Accuracy, ROC-AUC, F1, FPR@95%TPR, degradation-curve helpers.
 - [ ] `robustness_suite.py` — `RobustnessBenchmark` running the model across the
-      full transform severity spectrum from `configs/augmentations.yaml`.
-- [ ] `evaluate.py` — CLI wiring `--checkpoint` + `--config` to the benchmark,
+      full transform severity spectrum from `configs/augmentations.yaml`,
       producing CSV/JSON degradation-curve outputs.
 - [ ] `tests/test_evaluation.py` — metric correctness tests using a dummy
       random-logit model.
@@ -80,9 +100,10 @@ follow.
 
 ## 6. Integration & Polish
 
-- [ ] End-to-end run: real dataset -> `training/train.py` -> checkpoint ->
-      `training/evaluate.py` robustness report -> `predict.py --checkpoint ...` ->
-      `app.py`.
+- [ ] End-to-end run: real dataset -> `training/train_semantic.py` +
+      `training/train_frequency.py` -> per-stream checkpoints -> joint
+      fine-tuning -> `training/evaluate.py` robustness report ->
+      `predict.py --checkpoint ...` -> `app.py`.
 - [ ] Load a real checkpoint into `app.py` (currently always runs stub/random
       weights).
 - [ ] Restrict `app.py` image upload to `.jpg`/`.png`/`.webp` at the component

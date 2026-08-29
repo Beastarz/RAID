@@ -1,1 +1,29 @@
 # Configuration: augmentations.yaml
+#
+# Robustness transform parameters for training/data/augmentations.py
+# (RobustnessTransforms). Ranges follow the project's robustness targets in
+# .claude/CLAUDE.md: JPEG Q30-90, Gaussian Blur, 0.25x-0.5x Rescaling,
+# Gaussian Noise, Color Jitter, 80% Cropping.
+
+train:
+  # Probability each individual degradation independently fires per sample.
+  p_each: 0.5
+  jpeg_quality_range: [30, 90]
+  blur_sigma_range: [0.5, 2.0]
+  downscale_range: [0.25, 0.5]
+  noise_std_range: [0.03, 0.12]
+  color_jitter:
+    brightness: [0.8, 1.2]
+    contrast: [0.8, 1.2]
+    saturation: [0.8, 1.2]
+    hue: [-0.1, 0.1]
+  crop_percent: 0.8
+
+# Fixed severity levels used by training/evaluate.py to build one-transform-at-a-time
+# pipelines for degradation curves (accuracy vs. severity).
+eval:
+  jpeg_quality_levels: [30, 50, 70, 90]
+  blur_sigma_levels: [0.5, 1.0, 1.5, 2.0]
+  downscale_levels: [0.25, 0.35, 0.5]
+  noise_std_levels: [0.03, 0.07, 0.12]
+  crop_percent_levels: [0.8]

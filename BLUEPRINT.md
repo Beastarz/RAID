@@ -25,7 +25,8 @@ ai-image-detector/
 │ └── visualizer.py # Heatmap & attention map generation
 ├── training/ # Training pipeline — everything only the offline pipeline needs
 │ ├── **init**.py
-│ ├── train.py # Main training script
+│ ├── train_semantic.py # Trains the semantic stream in isolation, saves a checkpoint
+│ ├── train_frequency.py # Trains the frequency stream in isolation, saves a checkpoint
 │ ├── evaluate.py # Main evaluation CLI against benchmark transforms
 │ ├── data/ # Team Member A: Data & Augmentations
 │ │ ├── **init**.py
@@ -55,38 +56,51 @@ separated (`training/` vs. root-level `predict.py` / `app.py`) is what makes it 
 for the data/model/eval workstreams to iterate without breaking the demo, and vice
 versa.
 
-### Training Pipeline (offline, produces a checkpoint)
+### Training Pipeline (offline, produces per-stream checkpoints)
+
+The two feature-extraction streams are trained **independently** (their own
+script, their own checkpoint) so two teammates can research each backbone in
+parallel without touching the same file. Both scripts share the same data +
+augmentation path; neither touches `fusion.py` -- joint fine-tuning of the
+fused `DetectorPipeline` is future work (`TODO.md` §3).
 
 ```
 configs/base_config.yaml, configs/augmentations.yaml
               │
               ▼
-   training/data/dataset.py (AIGCDataset: manifest CSV -> [3, H, W])
+   training/data/dataset.py (AIGCDataset: manifest CSV or synthetic -> [3, H, W])
               │
               ▼
-   training/data/datamodule.py (DataLoader: batching, train/val/test splits)
+   training/data/datamodule.py (DataLoader: batching, train/val split)
               │
               ▼
    training/data/augmentations.py (RobustnessTransforms, applied before ToTensorV2())
               │
-              ▼
-   src/models/detector.py (DetectorPipeline: semantic + frequency streams -> fusion -> MLP head)
-              │
-              ▼
-   training/train.py (PyTorch Lightning training loop: loss, optimizer, checkpointing)
-              │
-              ▼
-   checkpoints/*.ckpt
-              │
-              ▼
-   training/evaluate.py (loads checkpoint, runs training/evaluation/robustness_suite.py
-                          across configs/augmentations.yaml severities)
-              │
-              ▼
-   metrics.py-computed CSV/JSON degradation-curve report
+        ┌─────┴─────┐
+        ▼           ▼
+ src/models/     src/models/
+ semantic_stream frequency_stream
+        │           │
+        ▼           ▼
+ training/       training/
+ train_semantic  train_frequency
+ .py (+ linear   .py (+ linear
+ head, loss,     head, loss,
+ optimizer)      optimizer)
+        │           │
+        ▼           ▼
+ checkpoints/    checkpoints/
+ semantic_       frequency_
+ stream.pt       stream.pt
 ```
 
-Entry points: `python -m training.train --config configs/base_config.yaml` and
+`training/evaluate.py` currently benchmarks the full (randomly-initialized,
+unless `--checkpoint` is given) fused `DetectorPipeline` directly -- it does
+not yet load the per-stream checkpoints above into it; wiring that up is
+tracked in `TODO.md` §3/§4.
+
+Entry points: `python -m training.train_semantic --config configs/base_config.yaml`,
+`python -m training.train_frequency --config configs/base_config.yaml`, and
 `python -m training.evaluate --checkpoint <ckpt> --config configs/augmentations.yaml`,
 both run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
 
@@ -211,7 +225,7 @@ To maximize team efficiency during a hackathon, team members can work simultaneo
 
 ## 6. Execution Strategy
 
-1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `training/train.py` runs using dummy input tensors and basic placeholder backbones.
+1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `training/train_semantic.py` and `training/train_frequency.py` run using dummy input tensors and basic placeholder backbones.
 2. **Step 2: Component Implementation**: Team members complete their respective modules using the agreed-upon data contracts.
 3. **Step 3: Integration**: Replace stub models with actual pretrained extraction backbones and connect real datasets to the robust augmentation pipeline.
 4. **Step 4: Benchmarking**: Run `training/evaluate.py` to test performance under JPEG compression, blur, downscaling, noise, jitter, and cropping, generating final metrics and visual heatmaps.

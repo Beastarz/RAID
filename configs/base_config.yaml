@@ -1,1 +1,19 @@
 # Configuration: base_config.yaml
+#
+# Global training parameters. Consumed by training/train_semantic.py,
+# training/train_frequency.py, and training/data/{dataset,datamodule}.py.
+
+seed: 42
+image_size: 512
+batch_size: 8
+num_workers: 0
+lr: 0.0001
+
+data:
+  # Path to a manifest CSV with an `image_path,label` header (0=Real, 1=AI-Generated).
+  # Leave null to fall back to an in-memory synthetic dataset for pipeline testing.
+  manifest_path: null
+  num_synthetic_samples: 32
+  val_split: 0.2
+
+log_level: INFO

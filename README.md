@@ -37,12 +37,37 @@ develop in parallel against a stable interface before the heavy models land.
 - `app.py` — Gradio frontend: image upload, Run button, prediction label, a
   P(AI-Generated) percentage slider, and a placeholder saliency heatmap overlay
   (to be replaced by the real Grad-CAM / attention visualizer).
+- `training/data/augmentations.py` — `RobustnessTransforms` is a real,
+  fully-implemented Albumentations pipeline (JPEG compression, Gaussian blur,
+  downscale rescaling, Gaussian noise, color jitter, 80% center crop), with a
+  train mode (stochastic stack) and an eval mode (one isolated transform at a
+  fixed severity, for degradation curves).
+- `training/data/dataset.py` / `datamodule.py` — `AIGCDataset` reads a real
+  manifest CSV when `configs/base_config.yaml`'s `data.manifest_path` is set,
+  else falls back to an in-memory synthetic dataset; `AIGCDataModule` wraps it
+  into train/val `DataLoader`s.
+- `training/train_semantic.py` / `training/train_frequency.py` — real,
+  runnable **mock** training loops, one per feature stream: config →
+  datamodule → the stream + a small linear head → a few real
+  forward/BCE-loss/backward/optimizer steps → saves a checkpoint
+  (`checkpoints/semantic_stream.pt` / `frequency_stream.pt`). Trains each
+  stream in isolation (bypasses `fusion.py`) so two teammates can iterate on a
+  stream each without sharing a file. No multi-epoch loop or joint
+  fine-tuning of the fused `DetectorPipeline` yet.
+- `training/evaluate.py` — a light mock sweep through the eval-mode
+  `RobustnessTransforms`, logging shapes/probabilities per severity level; real
+  metric computation (`training/evaluation/`) isn't implemented yet.
+- `training/logging_utils.py` — shared logger setup; the data/training path
+  logs dataset/datamodule sizes at INFO and per-sample augmentation params at
+  DEBUG, for tracing data flow and debugging.
 
-**Not yet implemented:** real backbone weights, the training loop
-(`training/train.py`), dataset loading (`training/data/`), the robustness
-evaluation suite (`training/evaluation/`, `training/evaluate.py`), and the real
-explainability visualizer (`src/explainability/`) — these currently exist only as
-empty module stubs.
+**Not yet implemented:** real backbone weights, the full (non-mock, multi-epoch)
+per-stream training loops, joint fine-tuning of the fused `DetectorPipeline`
+(and loading the per-stream checkpoints into it for evaluation), a real image
+dataset + manifest CSV, the robustness metrics/benchmark suite
+(`training/evaluation/metrics.py`, `robustness_suite.py`), and the real
+explainability visualizer (`src/explainability/`) — these currently exist only
+as empty module stubs or mocks.
 
 Because no real backbone is trained yet, current predictions are **not meaningful**
 — they reflect randomly initialized weights and exist only to prove the pipeline is
@@ -52,12 +77,13 @@ wired correctly end-to-end.
 
 The repo separates two independent pipelines that both build on `src/`:
 
-- **Training pipeline** (`training/`) — offline: `training/train.py` reads
-  `training/data/`, fits `src/models/DetectorPipeline`, and writes a checkpoint;
-  `training/evaluate.py` then benchmarks it with `training/evaluation/`. Run as
-  modules from the repo root, e.g.
-  `python -m training.train --config configs/base_config.yaml`. `training/data/`
-  and `training/evaluation/` are training-only.
+- **Training pipeline** (`training/`) — offline: `training/train_semantic.py`
+  and `training/train_frequency.py` each read `training/data/`, fit their own
+  stream, and write their own checkpoint, independently of each other;
+  `training/evaluate.py` then benchmarks the fused `DetectorPipeline` with
+  `training/evaluation/`. Run as modules from the repo root, e.g.
+  `python -m training.train_semantic --config configs/base_config.yaml`.
+  `training/data/` and `training/evaluation/` are training-only.
 - **Inference pipeline** (`predict.py`, `app.py`) — online: loads a checkpoint into
   `DetectorPipeline` and serves predictions via CLI or the Gradio app, using
   `src/explainability/` for saliency heatmaps. Never imports `training/`.
@@ -164,8 +190,24 @@ P(AI-Generated) percentage, and a placeholder saliency overlay.
 pytest tests/
 ```
 
-Note: `tests/test_*.py` are currently empty stubs, so this will report "no tests
-ran" until test cases are added — this is expected at this stage, not a failure.
+`tests/test_data.py` covers the augmentation shape contract, the dataset
+label/shape contract, and a smoke test per stream-training script (including
+that it writes its checkpoint file). `test_models.py` / `test_evaluation.py`
+are still empty stubs.
+
+### 9. Run the mock training pipeline
+
+```bash
+python -m training.train_semantic --config configs/base_config.yaml --steps 2 --log-level DEBUG
+python -m training.train_frequency --config configs/base_config.yaml --steps 2 --log-level DEBUG
+python -m training.evaluate --config configs/augmentations.yaml
+```
+
+All three run against the synthetic in-memory dataset by default (no real
+dataset needed) and log the data flow at each stage — DEBUG level shows which
+augmentations fired per sample. The two training scripts each write a
+checkpoint to `checkpoints/`. Neither trains a meaningful model yet; see the
+"Not yet implemented" list above.
 
 ## Contributing
 
