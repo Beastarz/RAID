@@ -1,0 +1,59 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Model checkpoints & weights
+checkpoints/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+
+# Datasets & large local artifacts
+data/
+datasets/
+*.npy
+*.npz
+
+# Logs & experiment tracking
+logs/
+lightning_logs/
+wandb/
+runs/
+*.log
+
+# Evaluation / inference outputs
+outputs/
+results/
+predictions/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Environment / secrets
+.env
+.env.*

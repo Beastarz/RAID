@@ -1,0 +1,15 @@
+# Core Framework
+torch
+torchvision
+
+# Utilities & Pipelines
+albumentations
+pyyaml
+scikit-learn
+matplotlib
+
+# Frontend
+gradio
+
+# Testing
+pytest
