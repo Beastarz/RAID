@@ -1,4 +1,4 @@
 """
-Module: evaluate
+Module: dataset
 Project: AI Image Detector
 """

@@ -16,7 +16,7 @@ follow.
 - [x] `app.py` — Gradio frontend with placeholder saliency overlay
 - [x] `.gitignore`, `README.md` setup guide
 
-## 1. Data & Augmentations (`src/data/`)
+## 1. Data & Augmentations (`training/data/`)
 
 - [ ] `dataset.py` — implement `AIGCDataset(Dataset)` reading a manifest CSV
       (`image_path,label`; `0=Real`, `1=AI-Generated`), returning `[3, 512, 512]`
@@ -51,7 +51,7 @@ follow.
 - [ ] `tests/test_models.py` — shape/contract tests for each stream, fusion, and
       `DetectorPipeline`, including a frozen-weights determinism test.
 
-## 3. Training (`train.py`)
+## 3. Training (`training/train.py`)
 
 - [ ] Implement the PyTorch Lightning training loop: optimizer, LR schedule,
       loss (BCE on `logit`), checkpointing, logging.
@@ -59,7 +59,7 @@ follow.
 - [ ] Decide freeze/fine-tune strategy for the semantic and frequency backbones.
 - [ ] Produce a first trained checkpoint under `checkpoints/`.
 
-## 4. Robustness Evaluation (`src/evaluation/`, `evaluate.py`)
+## 4. Robustness Evaluation (`training/evaluation/`, `training/evaluate.py`)
 
 - [ ] `metrics.py` — Accuracy, ROC-AUC, F1, FPR@95%TPR, degradation-curve helpers.
 - [ ] `robustness_suite.py` — `RobustnessBenchmark` running the model across the
@@ -80,8 +80,9 @@ follow.
 
 ## 6. Integration & Polish
 
-- [ ] End-to-end run: real dataset -> `train.py` -> checkpoint -> `evaluate.py`
-      robustness report -> `predict.py --checkpoint ...` -> `app.py`.
+- [ ] End-to-end run: real dataset -> `training/train.py` -> checkpoint ->
+      `training/evaluate.py` robustness report -> `predict.py --checkpoint ...` ->
+      `app.py`.
 - [ ] Load a real checkpoint into `app.py` (currently always runs stub/random
       weights).
 - [ ] Restrict `app.py` image upload to `.jpg`/`.png`/`.webp` at the component

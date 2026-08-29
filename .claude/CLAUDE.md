@@ -20,16 +20,18 @@ This repository contains a modular prototype for distinguishing AI-generated ima
 ## Directory Map & Module Ownership
 
 - `configs/`: YAML configurations for base hyperparameters, model architecture, and robustness transformations.
-- `src/data/`: Dataset loaders (`AIGCDataset`) and Albumentations robustness transform pipelines (`RobustnessTransforms`).
-- `src/models/`:
+- `src/models/` (shared by both pipelines):
 - `base_stream.py`: Abstract class `BaseFeatureStream`. DO NOT modify without team consensus.
 - `semantic_stream.py`: Stream 1 (High-Level ViT / DINOv2 wrapper).
 - `frequency_stream.py`: Stream 2 (Mid-Level 2D FFT + ConvNeXt-Tiny wrapper).
 - `fusion.py`: Cross-attention / Feature fusion layer.
 - `detector.py`: End-to-end `DetectorPipeline` PyTorch Lightning module.
 
-- `src/evaluation/`: Automated benchmark runner testing performance across degradation spectrums.
-- `src/explainability/`: Grad-CAM and ViT attention heatmap visualizers.
+- `src/explainability/`: Grad-CAM and ViT attention heatmap visualizers, used by the inference pipeline (`predict.py --save_heatmap`, `app.py`).
+- `training/`: Everything the training pipeline owns, isolated from the inference pipeline:
+- `train.py` / `evaluate.py`: Entry-point CLIs (fit a checkpoint / run the robustness benchmark).
+- `data/`: Dataset loaders (`AIGCDataset`) and Albumentations robustness transform pipelines (`RobustnessTransforms`). Training-only — never imported by `predict.py` or `app.py`.
+- `evaluation/`: Automated benchmark runner (`RobustnessBenchmark`) and metrics testing performance across degradation spectrums. Training-only.
 
 ---
 
@@ -57,12 +59,14 @@ pytest tests/test_evaluation.py
 
 ### Training
 
+Run from the repo root as a module so `training/` scripts can import `src/`:
+
 ```bash
 # Train detector using default config
-python train.py --config configs/base_config.yaml
+python -m training.train --config configs/base_config.yaml
 
 # Train with specific batch size and learning rate
-python train.py --config configs/base_config.yaml --batch_size 32 --lr 1e-4
+python -m training.train --config configs/base_config.yaml --batch_size 32 --lr 1e-4
 
 ```
 
@@ -70,7 +74,7 @@ python train.py --config configs/base_config.yaml --batch_size 32 --lr 1e-4
 
 ```bash
 # Run benchmark across all transform suites (JPEG, Blur, Rescale, Noise, Crop)
-python evaluate.py --checkpoint checkpoints/best_model.ckpt --config configs/augmentations.yaml
+python -m training.evaluate --checkpoint checkpoints/best_model.ckpt --config configs/augmentations.yaml
 
 ```
 

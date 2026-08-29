@@ -24,7 +24,6 @@ checkpoints/
 *.safetensors
 
 # Datasets & large local artifacts
-data/
 datasets/
 *.npy
 *.npz

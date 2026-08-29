@@ -11,13 +11,8 @@ ai-image-detector/
 │ ├── base_config.yaml # Global parameters (batch size, image size, learning rate)
 │ ├── augmentations.yaml # Robustness test transform parameters
 │ └── model_config.yaml # Hyperparameters for streams and fusion
-├── src/
+├── src/ # Shared library code — used by BOTH pipelines
 │ ├── **init**.py
-│ ├── data/ # Team Member A: Data & Augmentations
-│ │ ├── **init**.py
-│ │ ├── dataset.py # Custom Dataset class loading Real/AI images
-│ │ ├── augmentations.py # Robustness transform pipeline (Albumentations)
-│ │ └── datamodule.py # PyTorch DataLoader wrapper
 │ ├── models/ # Team Member B: Network Architecture
 │ │ ├── **init**.py
 │ │ ├── base_stream.py # Abstract class for extraction streams
@@ -25,26 +20,106 @@ ai-image-detector/
 │ │ ├── frequency_stream.py # Stream 2: Mid-level/frequency domain backbone
 │ │ ├── fusion.py # Cross-stream feature fusion layer
 │ │ └── detector.py # End-to-end PyTorch Lightning / PyTorch Module
-│ ├── evaluation/ # Team Member C: Benchmark & Metrics
-│ │ ├── **init**.py
-│ │ ├── robustness_suite.py # Automated robustness test runner across transforms
-│ │ └── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
-│ └── explainability/ # Team Member D: Diagnostic Tools
+│ └── explainability/ # Team Member D: Diagnostic Tools (used by predict.py / app.py)
 │ ├── **init**.py
 │ └── visualizer.py # Heatmap & attention map generation
+├── training/ # Training pipeline — everything only the offline pipeline needs
+│ ├── **init**.py
+│ ├── train.py # Main training script
+│ ├── evaluate.py # Main evaluation CLI against benchmark transforms
+│ ├── data/ # Team Member A: Data & Augmentations
+│ │ ├── **init**.py
+│ │ ├── dataset.py # Custom Dataset class loading Real/AI images
+│ │ ├── augmentations.py # Robustness transform pipeline (Albumentations)
+│ │ └── datamodule.py # PyTorch DataLoader wrapper
+│ └── evaluation/ # Team Member C: Benchmark & Metrics
+│ ├── **init**.py
+│ ├── robustness_suite.py # Automated robustness test runner across transforms
+│ └── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
 ├── tests/ # Integration and unit tests
 │ ├── test_data.py
 │ ├── test_models.py
 │ └── test_evaluation.py
-├── train.py # Main training script
-├── evaluate.py # Main evaluation CLI against benchmark transforms
-├── predict.py # Single-image / Batch inference script
+├── predict.py # Inference pipeline: single-image / Batch prediction script
+├── app.py # Inference pipeline: Gradio frontend
 ├── requirements.txt # Dependencies
 └── README.md # Setup and usage guide
 
 ---
 
-## 2. Core Data Contracts & Tensor Flow
+## 2. Pipeline Data Flow: Training vs. Inference
+
+The repository has **two independent entry-point pipelines** that both sit on top of
+the same `src/` modules but never call into each other. Keeping their entry scripts
+separated (`training/` vs. root-level `predict.py` / `app.py`) is what makes it safe
+for the data/model/eval workstreams to iterate without breaking the demo, and vice
+versa.
+
+### Training Pipeline (offline, produces a checkpoint)
+
+```
+configs/base_config.yaml, configs/augmentations.yaml
+              │
+              ▼
+   training/data/dataset.py (AIGCDataset: manifest CSV -> [3, H, W])
+              │
+              ▼
+   training/data/datamodule.py (DataLoader: batching, train/val/test splits)
+              │
+              ▼
+   training/data/augmentations.py (RobustnessTransforms, applied before ToTensorV2())
+              │
+              ▼
+   src/models/detector.py (DetectorPipeline: semantic + frequency streams -> fusion -> MLP head)
+              │
+              ▼
+   training/train.py (PyTorch Lightning training loop: loss, optimizer, checkpointing)
+              │
+              ▼
+   checkpoints/*.ckpt
+              │
+              ▼
+   training/evaluate.py (loads checkpoint, runs training/evaluation/robustness_suite.py
+                          across configs/augmentations.yaml severities)
+              │
+              ▼
+   metrics.py-computed CSV/JSON degradation-curve report
+```
+
+Entry points: `python -m training.train --config configs/base_config.yaml` and
+`python -m training.evaluate --checkpoint <ckpt> --config configs/augmentations.yaml`,
+both run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
+
+### Inference Pipeline (online, consumes a checkpoint)
+
+```
+Image file / directory (--image)
+              │
+              ▼
+   predict.py::load_image_tensor (resize 512x512, ImageNet normalize -> [1, 3, 512, 512])
+              │
+              ▼
+   src/models/detector.py (DetectorPipeline, weights loaded from --checkpoint if given)
+              │
+              ▼
+   {"logit", "prob", "features"} dict
+              │
+              ▼
+   predict.py -> JSON line per image (CLI)     app.py -> Gradio UI (label, probability, heatmap)
+                                                      │
+                                                      ▼
+                                        src/explainability/visualizer.py (saliency overlay)
+```
+
+Entry points: `python predict.py --image <path> [--checkpoint <ckpt>]` and
+`python app.py` (Gradio server), both at the repo root.
+
+The two pipelines share `src/models/` and the `[B, 3, H, W] -> {logit, prob, features}`
+contract. `training/data/` and `training/evaluation/` live entirely inside
+`training/` and are never imported by `predict.py` or `app.py`; `src/explainability/`
+is the reverse — inference-only, never imported by `training/`.
+
+## 3. Core Data Contracts & Tensor Flow
 
 To ensure all components seamlessly connect, teammates must strictly follow these standardization contracts:
 
@@ -60,9 +135,9 @@ To ensure all components seamlessly connect, teammates must strictly follow thes
 
 ---
 
-## 3. Modular Component Blueprint
+## 4. Modular Component Blueprint
 
-### A. Data & Augmentation Module (`src/data/`)
+### A. Data & Augmentation Module (`training/data/`)
 
 **Responsibility:** Load dataset pairs, apply standardized spatial cropping, and simulate real-world degradations (JPEG compression, blur, noise, downscaling) during both training and robustness testing.
 
@@ -97,7 +172,7 @@ Key classes to implement:
 - `DetectorPipeline`: Main wrapper holding Stream 1, Stream 2, Fusion, and a final Multi-Layer Perceptron (MLP) classification head. Returns a dictionary containing prediction logits, probabilities, and intermediate feature vectors:
   `Output Dict = {'logit': Tensor[B, 1], 'prob': Tensor[B, 1], 'features': Tensor[B, D_fused]}`
 
-### D. Evaluation Suite (`src/evaluation/`)
+### D. Evaluation Suite (`training/evaluation/`)
 
 **Responsibility:** Automate evaluation across specific transformation suites to compute degradation curves (e.g., Accuracy vs. JPEG Quality Factor).
 
@@ -121,7 +196,7 @@ Key tasks to implement:
 
 ---
 
-## 4. Parallel Workstreams & Task Allocation
+## 5. Parallel Workstreams & Task Allocation
 
 To maximize team efficiency during a hackathon, team members can work simultaneously on separate modules using mock interfaces:
 
@@ -129,14 +204,14 @@ To maximize team efficiency during a hackathon, team members can work simultaneo
 | ------------ | ------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Member A** | **Data & Augmentations**        | `dataset.py`, `augmentations.py`, transform parameters configuration    | Can build data loaders and test transformations on dummy images independently of model development.                                           |
 | **Member B** | **Model & Fusion Architecture** | `semantic_stream.py`, `frequency_stream.py`, `fusion.py`, `detector.py` | Can build backbone wrappers using lightweight stub networks (e.g., simple CNNs) to verify tensor shapes before dropping in pretrained models. |
-| **Member C** | **Evaluation & Robustness**     | `robustness_suite.py`, `metrics.py`, `evaluate.py`                      | Can write the evaluation benchmark runner using a dummy model that outputs random logits to ensure metric calculation works.                  |
+| **Member C** | **Evaluation & Robustness**     | `robustness_suite.py`, `metrics.py`, `training/evaluate.py`             | Can write the evaluation benchmark runner using a dummy model that outputs random logits to ensure metric calculation works.                  |
 | **Member D** | **Explainability & Scripts**    | `visualizer.py`, `predict.py`, CLI interface, documentation             | Can develop visualization scripts using random gradient tensors or mock spatial attention maps.                                               |
 
 ---
 
-## 5. Execution Strategy
+## 6. Execution Strategy
 
-1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `train.py` runs using dummy input tensors and basic placeholder backbones.
+1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `training/train.py` runs using dummy input tensors and basic placeholder backbones.
 2. **Step 2: Component Implementation**: Team members complete their respective modules using the agreed-upon data contracts.
 3. **Step 3: Integration**: Replace stub models with actual pretrained extraction backbones and connect real datasets to the robust augmentation pipeline.
-4. **Step 4: Benchmarking**: Run `evaluate.py` to test performance under JPEG compression, blur, downscaling, noise, jitter, and cropping, generating final metrics and visual heatmaps.
+4. **Step 4: Benchmarking**: Run `training/evaluate.py` to test performance under JPEG compression, blur, downscaling, noise, jitter, and cropping, generating final metrics and visual heatmaps.

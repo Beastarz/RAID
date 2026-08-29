@@ -38,10 +38,11 @@ develop in parallel against a stable interface before the heavy models land.
   P(AI-Generated) percentage slider, and a placeholder saliency heatmap overlay
   (to be replaced by the real Grad-CAM / attention visualizer).
 
-**Not yet implemented:** real backbone weights, training loop (`train.py`), dataset
-loading (`src/data/`), the robustness evaluation suite (`src/evaluation/`), and the
-real explainability visualizer (`src/explainability/`) — these currently exist only
-as empty module stubs.
+**Not yet implemented:** real backbone weights, the training loop
+(`training/train.py`), dataset loading (`training/data/`), the robustness
+evaluation suite (`training/evaluation/`, `training/evaluate.py`), and the real
+explainability visualizer (`src/explainability/`) — these currently exist only as
+empty module stubs.
 
 Because no real backbone is trained yet, current predictions are **not meaningful**
 — they reflect randomly initialized weights and exist only to prove the pipeline is
@@ -49,7 +50,20 @@ wired correctly end-to-end.
 
 ## Project Structure
 
-See [`BLUEPRINT.md`](BLUEPRINT.md) for the full directory map and data contracts.
+The repo separates two independent pipelines that both build on `src/`:
+
+- **Training pipeline** (`training/`) — offline: `training/train.py` reads
+  `training/data/`, fits `src/models/DetectorPipeline`, and writes a checkpoint;
+  `training/evaluate.py` then benchmarks it with `training/evaluation/`. Run as
+  modules from the repo root, e.g.
+  `python -m training.train --config configs/base_config.yaml`. `training/data/`
+  and `training/evaluation/` are training-only.
+- **Inference pipeline** (`predict.py`, `app.py`) — online: loads a checkpoint into
+  `DetectorPipeline` and serves predictions via CLI or the Gradio app, using
+  `src/explainability/` for saliency heatmaps. Never imports `training/`.
+
+See [`BLUEPRINT.md`](BLUEPRINT.md) for the full directory map, the data-flow
+diagrams for each pipeline, and the tensor contracts.
 
 ## Setup & Test Guide
 
