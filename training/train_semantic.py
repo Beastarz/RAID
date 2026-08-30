@@ -20,7 +20,6 @@ teammates can iterate on a stream each without touching the same file.
 import argparse
 import sys
 import time
-from itertools import cycle
 from pathlib import Path
 from typing import List, Optional
 
@@ -63,6 +62,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=None, help="Override config's batch_size")
     parser.add_argument("--lr", type=float, default=None, help="Override config's lr")
     parser.add_argument("--steps", type=int, default=2, help="Number of mock optimizer steps to run")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--log-level", type=str, default=None, help="Override config's log_level")
     return parser.parse_args(argv)
@@ -105,27 +105,38 @@ def main(argv: Optional[List[str]] = None) -> None:
                 counts["total"], counts["trainable"], counts["frozen"], lr)
 
     model.train()
-    batch_iter = cycle(train_loader)
-    for step in range(1, args.steps + 1):
-        start = time.perf_counter()
-        images, labels = next(batch_iter)
-        images, labels = images.to(device), labels.to(device)
+    global_step = 0
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        for images, labels in train_loader:
+            start = time.perf_counter()
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            logit = model(images)
+            loss = loss_fn(logit, labels)
+            loss.backward()
+            optimizer.step()
+            global_step += 1
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            logger.info("epoch=%d/%d step=%d loss=%.4f elapsed_ms=%.1f",
+                        epoch, args.epochs, global_step, loss.item(), elapsed_ms)
+            if global_step >= args.steps:
+                break
+        if global_step >= args.steps:
+            break
 
-        optimizer.zero_grad()
-        logit = model(images)
-        loss = loss_fn(logit, labels)
-        loss.backward()
-        optimizer.step()
-
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        logger.info(
-            "step=%d/%d batch=%s loss=%.4f elapsed_ms=%.1f",
-            step,
-            args.steps,
-            tuple(images.shape),
-            loss.item(),
-            elapsed_ms,
-        )
+        model.eval()
+        correct = total = 0
+        validation_loss = 0.0
+        with torch.no_grad():
+            for images, labels in datamodule.val_dataloader():
+                images, labels = images.to(device), labels.to(device)
+                logits = model(images)
+                validation_loss += loss_fn(logits, labels).item() * labels.size(0)
+                correct += ((torch.sigmoid(logits) >= 0.5) == (labels >= 0.5)).sum().item()
+                total += labels.numel()
+        logger.info("epoch=%d validation_loss=%.4f validation_accuracy=%.3f",
+                    epoch, validation_loss / max(total, 1), correct / max(total, 1))
 
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
