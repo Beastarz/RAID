@@ -41,12 +41,13 @@ class SemanticProbe(nn.Module):
     """SemanticStream + a linear classification head, trained standalone."""
 
     def __init__(self, feature_dim: int = OUTPUT_DIM, pretrained: bool = False,
-                 freeze_backbone: bool = True) -> None:
+                 freeze_backbone: bool = True, unfreeze_last_n_blocks: int = 0) -> None:
         super().__init__()
         self.stream = SemanticStream(
             output_dim=feature_dim,
             pretrained=pretrained,
             freeze_backbone=freeze_backbone,
+            unfreeze_last_n_blocks=unfreeze_last_n_blocks,
         )
         self.head = nn.Linear(feature_dim, 1)
 
@@ -81,7 +82,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     log_level = args.log_level or config["log_level"]
 
     logger = setup_logger("training", log_level)
-    logger.info("MOCK SEMANTIC STREAM TRAINING -- SemanticStream is still a pool+linear stub, see TODO.md SS3")
+    logger.info("SEMANTIC STREAM TRAINING -- ViT-B/16 semantic backbone")
 
     torch.manual_seed(config["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
