@@ -40,9 +40,14 @@ from training.logging_utils import setup_logger  # noqa: E402
 class SemanticProbe(nn.Module):
     """SemanticStream + a linear classification head, trained standalone."""
 
-    def __init__(self, feature_dim: int = OUTPUT_DIM) -> None:
+    def __init__(self, feature_dim: int = OUTPUT_DIM, pretrained: bool = False,
+                 freeze_backbone: bool = True) -> None:
         super().__init__()
-        self.stream = SemanticStream(output_dim=feature_dim)
+        self.stream = SemanticStream(
+            output_dim=feature_dim,
+            pretrained=pretrained,
+            freeze_backbone=freeze_backbone,
+        )
         self.head = nn.Linear(feature_dim, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -85,7 +90,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     datamodule = AIGCDataModule(config, augmentations_config)
     train_loader = datamodule.train_dataloader()
 
-    model = SemanticProbe().to(device)
+    semantic_config = config.get("semantic", {})
+    model = SemanticProbe(
+        feature_dim=semantic_config.get("output_dim", OUTPUT_DIM),
+        pretrained=semantic_config.get("pretrained", False),
+        freeze_backbone=semantic_config.get("freeze_backbone", True),
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     logger.info("Model built: %d parameters, lr=%g", sum(p.numel() for p in model.parameters()), lr)

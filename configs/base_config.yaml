@@ -9,6 +9,12 @@ batch_size: 8
 num_workers: 0
 lr: 0.0001
 
+# Stream-specific settings. Keep pretrained=false for offline smoke tests.
+semantic:
+  pretrained: false
+  freeze_backbone: true
+  output_dim: 1024
+
 data:
   # Path to a manifest CSV with an `image_path,label` header (0=Real, 1=AI-Generated).
   # Leave null to fall back to an in-memory synthetic dataset for pipeline testing.

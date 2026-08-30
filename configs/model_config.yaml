@@ -1,1 +1,14 @@
 # Configuration: model_config.yaml
+# Model architecture settings.
+
+semantic:
+  # Set true for real training; it downloads torchvision's ViT-B/16 weights.
+  pretrained: false
+  freeze_backbone: true
+  output_dim: 1024
+
+frequency:
+  output_dim: 768
+
+fusion:
+  fused_dim: 512
