@@ -49,7 +49,13 @@ def main() -> None:
                 raise TypeError(f"Unsupported image value: {type(image)!r}")
             path = image_dir / f"sample_{count:06d}.jpg"
             image.convert("RGB").save(path, quality=95)
-            handle.write(f"{path.as_posix()},{int(sample[label_col])}\n")
+            # SID_Set: 0=real, 1=fully synthetic, 2=tampered. The project
+            # uses binary labels, so both generated/manipulated classes map to AI.
+            raw_label = int(sample[label_col])
+            if raw_label not in (0, 1, 2):
+                raise ValueError(f"Unexpected SID_Set label: {raw_label}")
+            binary_label = 0 if raw_label == 0 else 1
+            handle.write(f"{path.as_posix()},{binary_label}\n")
             count += 1
             if count >= args.limit:
                 break
