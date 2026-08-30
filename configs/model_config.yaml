@@ -5,6 +5,7 @@ semantic:
   # Set true for real training; it downloads torchvision's ViT-B/16 weights.
   pretrained: false
   freeze_backbone: true
+  unfreeze_last_n_blocks: 0
   output_dim: 1024
 
 frequency:

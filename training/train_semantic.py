@@ -95,10 +95,13 @@ def main(argv: Optional[List[str]] = None) -> None:
         feature_dim=semantic_config.get("output_dim", OUTPUT_DIM),
         pretrained=semantic_config.get("pretrained", False),
         freeze_backbone=semantic_config.get("freeze_backbone", True),
+        unfreeze_last_n_blocks=semantic_config.get("unfreeze_last_n_blocks", 0),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()
-    logger.info("Model built: %d parameters, lr=%g", sum(p.numel() for p in model.parameters()), lr)
+    counts = model.stream.parameter_counts()
+    logger.info("Model built: total=%d trainable=%d frozen=%d parameters, lr=%g",
+                counts["total"], counts["trainable"], counts["frozen"], lr)
 
     model.train()
     batch_iter = cycle(train_loader)
