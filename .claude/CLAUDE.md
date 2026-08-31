@@ -31,7 +31,7 @@ This repository contains a modular prototype for distinguishing AI-generated ima
 - `training/`: Everything the training pipeline owns, isolated from the inference pipeline:
 - `train_semantic.py` / `train_frequency.py`: independent entry-point CLIs, one per feature stream, each training its own stream + a small head and saving its own checkpoint. Deliberately separate files (no shared module between them) so two teammates can work on a stream each at once.
 - `evaluate.py`: entry-point CLI running the robustness benchmark against the fused `DetectorPipeline`.
-- `data/`: Dataset loaders (`AIGCDataset`) and Albumentations robustness transform pipelines (`RobustnessTransforms`). Training-only — never imported by `predict.py` or `app.py`.
+- `data/`: Dataset loaders (`AIGCDataset`), Albumentations robustness transform pipelines (`RobustnessTransforms`), and `import_hf.py` (streams a Hugging Face dataset into a local manifest CSV). Training-only — never imported by `predict.py` or `app.py`.
 - `evaluation/`: Automated benchmark runner (`RobustnessBenchmark`) and metrics testing performance across degradation spectrums. Training-only.
 
 ---

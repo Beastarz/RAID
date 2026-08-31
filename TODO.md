@@ -33,30 +33,44 @@ follow.
       shape contract, dataset label/shape contract, and a smoke test per
       stream-training script (`train_semantic.py`/`train_frequency.py`,
       including checkpoint-file creation).
+- [x] `training/data/import_hf.py` — streams a real image dataset from the
+      Hugging Face Hub (default `RAID-techjam/SID_Set`), exports a `--limit`-sized
+      JPEG subset, and writes an `AIGCDataset`-compatible `manifest.csv`
+      (remaps SID_Set's 3-way label onto the project's binary contract).
+- [x] `src/models/semantic_stream.py` — replaced the pool+linear stub with a
+      real torchvision ViT-B/16 backbone (`pretrained`/`freeze_backbone`/
+      `unfreeze_last_n_blocks` config, `parameter_counts()` for logging),
+      keeping the `[B, 3, H, W] -> [B, 1024]` contract.
+- [x] Populate `configs/model_config.yaml` (was empty) with semantic/frequency/
+      fusion hyperparameters.
+- [x] `tests/test_models.py` — output-contract, non-RGB-rejection,
+      freeze/unfreeze-last-N-blocks, and parameter-count tests for
+      `SemanticStream`, plus an output-contract test for `DetectorPipeline`.
+- [x] `training/train_semantic.py` — real multi-epoch (`--epochs`) training
+      loop with a post-epoch validation pass (loss + accuracy), reading the new
+      `semantic` config block; capped by `--steps` total optimizer steps.
 
 ## 1. Data & Augmentations (`training/data/`) — remaining
 
-- [ ] Source or assemble the real/AI-generated image dataset and build the
-      manifest CSV (currently only exercised via the synthetic fallback).
+- [ ] Run `training/data/import_hf.py` against the full `SID_Set` (or another
+      source) at training scale, not just a `--limit`-sized smoke subset.
 - [ ] Broaden `tests/test_data.py` beyond the minimal critical-path set (e.g.
       manifest-CSV loading, eval-mode isolation, severity bounds) once useful.
 
 ## 2. Model Backbones (`src/models/`)
 
-- [ ] `semantic_stream.py` — replace the pool+linear stub with a DINOv2 / ViT
-      backbone (frozen or fine-tuned), keeping the `[B, 3, H, W] -> [B, 1024]`
-      contract.
 - [ ] `frequency_stream.py` — replace the FFT-magnitude stub with real FFT
       high-pass masking feeding a lightweight ConvNeXt-Tiny backbone, keeping the
       `[B, 3, H, W] -> [B, 768]` contract.
 - [ ] `fusion.py` — upgrade concat+linear to cross-attention fusion, keeping the
       `-> [B, 512]` contract.
-- [ ] Populate `configs/model_config.yaml` (currently empty) with backbone and
-      fusion hyperparameters.
 - [ ] Verify total parameter count stays under the 2B budget (target ~337M) once
-      real backbones are in — add an automated check.
-- [ ] `tests/test_models.py` — shape/contract tests for each stream, fusion, and
-      `DetectorPipeline`, including a frozen-weights determinism test.
+      the frequency backbone is in — add an automated check (semantic ViT-B/16
+      alone is ~86M; `parameter_counts()` on `SemanticStream` already reports
+      its share).
+- [ ] `tests/test_models.py` — add shape/contract tests for `frequency_stream.py`
+      and `fusion.py`, plus a frozen-weights determinism test, once those
+      backbones are real.
 
 ## 3. Training (`training/train_semantic.py`, `training/train_frequency.py`)
 
@@ -70,8 +84,11 @@ so two teammates can research a stream each in parallel; neither touches
 - [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt`,
       `checkpoints/frequency_stream.pt`) — currently mock weights, not yet
       meaningful.
-- [ ] Implement the full (PyTorch Lightning or plain) per-stream training
-      loop: LR schedule, multi-epoch training, real loss curves.
+- [x] `train_semantic.py` — real multi-epoch loop (`--epochs`) with
+      post-epoch validation loss/accuracy logging.
+- [ ] `train_frequency.py` — still the short mock loop; bring it up to the
+      same multi-epoch + validation shape as `train_semantic.py`, plus an LR
+      schedule for both streams.
 - [ ] Once both streams are validated individually: joint fine-tuning of the
       fused `DetectorPipeline` (`fusion.py` + both streams together), and
       wiring `training/evaluate.py` to load the two per-stream checkpoints
