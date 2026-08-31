@@ -242,16 +242,21 @@ Suggested files: `src/explainability/gradcam.py`,
 
 ### Phase 5: Branch contributions
 
-- [ ] Implement exact two-branch Shapley contributions from baseline,
-      semantic-only, NPR-only, and combined logits.
-- [ ] Return the baseline logit, signed contributions, optional absolute display
-      shares, and reconstruction error.
+- [ ] Implement exact Shapley contributions for a generic set of named branches
+      when the complete coalition power set is supplied.
+- [ ] Validate unique branches, complete coalitions, finite logits, and a
+      practical branch-count limit.
+- [ ] Preserve the optimized two-branch result while supporting a possible
+      semantic + frequency + NPR topology.
+- [ ] Return the baseline logit, signed branch contributions, optional absolute
+      display shares, reconstruction error, and coalition metadata.
 - [ ] Verify that baseline plus branch contributions reconstructs the combined
       logit within numerical tolerance.
 - [ ] Leave branch replacement policy to the adapter; prefer calibration-set
       mean features over arbitrary zero vectors when the final model supports
       feature-level branch ablation.
-- [ ] Acceptance: exact reconstruction holds for a nonlinear toy fusion model.
+- [ ] Acceptance: exact reconstruction holds for nonlinear two-branch and
+      three-branch toy fusion models.
 
 Suggested files: `src/explainability/branch_contributions.py` and
 `tests/test_branch_contributions.py`.
@@ -260,12 +265,15 @@ Suggested files: `src/explainability/branch_contributions.py` and
 
 - [ ] Implement deletion and insertion against a raw-image scoring callback,
       configurable patch size, perturbation count, baseline, and logit selector.
-- [ ] Perturb the raw source image and regenerate every model view after each
-      step rather than perturbing only the semantic tensor.
-- [ ] Support deterministic context so NPR crop coordinates and crop aggregation
-      remain fixed throughout every perturbation sequence.
+- [ ] Perturb raw source images and regenerate every active branch input after
+      each step rather than perturbing one model-specific tensor.
+- [ ] Preserve adapter-owned deterministic context such as crop coordinates,
+      resize policy, frequency transforms, and crop aggregation throughout every
+      perturbation sequence.
 - [ ] Prefer blur or dataset-mean baselines and patch-level perturbations to
       avoid introducing synthetic forensic edges.
+- [ ] Report semantic, frequency/NPR, and combined-map faithfulness separately
+      when those maps are available.
 - [ ] Save score curves as well as normalized deletion/insertion AUC values.
 - [ ] Acceptance: a patch-dependent toy classifier ranks a correct heatmap above
       a random heatmap.
@@ -310,13 +318,16 @@ explanations/<sample-id>/*.png
 
 - [ ] After model work merges, add one isolated
       `src/explainability/adapters/detector_adapter.py` implementation.
+- [ ] Confirm the final branch manifest, checkpoint format, preprocessing
+      contracts, and decision threshold before implementation.
 - [ ] Strictly load and validate the final checkpoint and record its identity and
       preprocessing metadata in reports.
-- [ ] Construct separate resized/normalized semantic views and native-resolution
-      raw NPR crops from each source image.
-- [ ] Expose the final AI logit, semantic attribution target, NPR spatial target,
-      pre-BatchNorm NPR residual, attention tensors when available, branch
-      coalitions, and deterministic crop coordinates.
+- [ ] Construct branch-specific prepared inputs from each raw source image.
+- [ ] Expose the final AI logit plus named attribution targets and intermediate
+      representations for every supported branch.
+- [ ] Preserve deterministic preparation context, including crop coordinates,
+      resize policy, frequency transforms, and crop aggregation where applicable.
+- [ ] Expose complete branch coalitions when contribution analysis is supported.
 - [ ] Omit unsupported explanation methods with a structured reason instead of
       inventing outputs.
 - [ ] Keep this adapter as the only module containing knowledge of final branch
@@ -324,11 +335,16 @@ explanations/<sample-id>/*.png
 
 ### Phase 9: Application integration
 
-- [ ] Replace `app.py`'s `_mock_saliency_overlay` with adapter-backed semantic
-      attribution, semantic attention, NPR Grad-CAM, and NPR residual views.
+- [ ] Replace `app.py`'s `_mock_saliency_overlay` with all adapter-supported
+      explanation views, including semantic attribution, attention,
+      frequency-plane visualization, NPR residuals, and branch Grad-CAM where
+      available.
+- [ ] Never overlay frequency-coordinate maps on the original image.
 - [ ] Add branch contributions and a raw JSON explanation component to Gradio.
 - [ ] Extend `predict.py` with explanation-method and output-directory options,
       including `--save_heatmap` compatibility.
+- [ ] Preserve the existing threshold slider, generator-based loading state,
+      label-confidence behavior, and CSS during Gradio integration.
 - [ ] Keep expensive Integrated Gradients and deletion/insertion disabled by
       default and expose them as explicit opt-in analyses.
 - [ ] Keep dataset-level ROC/PR, confusion, calibration, and robustness reports
@@ -337,9 +353,10 @@ explanations/<sample-id>/*.png
 ### Execution workflow
 
 `TODO.md` is the source of truth for scope, dependencies, and acceptance
-criteria. The parent agent must generate each worker prompt immediately before
-the work starts; do not prewrite fixed prompts for later waves because the
-repository and model contracts may change between reviews.
+criteria. GPT-5.6 Sol medium is the parent planner/reviewer and GPT-5.6 Luna
+xhigh is the sole active implementation worker. Sol must generate each Luna
+prompt immediately before work starts; do not prewrite fixed prompts for later
+waves because the repository and model contracts may change between reviews.
 
 #### Wave 0: Contracts (sequential)
 
@@ -394,48 +411,65 @@ Wave 1 accepted handoff:
   collect in the available pytest environment because `torch` and
   `albumentations` are not installed there.
 
-#### Wave 2: Independent algorithms (parallel where isolated)
+#### Wave 2.0: Verification environment
 
-- [ ] Before assigning architecture-facing algorithms, amend the adapter
-      capabilities to expose generic named branch targets/intermediate
-      representations. The active detector now uses an FFT high-pass ConvNeXt
-      branch, while NPR remains a possible replacement/additional branch, so
-      Wave 0's NPR-specific methods are too narrow for final integration.
-- [ ] Assign separate workers to robustness aggregation, generic Grad-CAM,
-      Integrated Gradients, attention rollout, and branch Shapley contributions.
-- [ ] Do not let algorithm workers edit shared facades such as `visualizer.py`;
-      each worker owns one implementation module and one focused test module.
-- [ ] Parent review gate: verify consistent error handling, dtype/device behavior,
-      logit targeting, hook cleanup, output contracts, and architecture
-      independence across all implementations.
+- [ ] Create a repository `.venv` and install `requirements.txt`.
+- [ ] Record the Python and dependency versions used for verification.
+- [ ] Run the existing full test suite and record the baseline before adding
+      attribution algorithms.
+- [ ] Use the same environment for every remaining focused and full-suite run.
 
-#### Wave 3: Composition (mostly sequential)
+#### Wave 2: Algorithms (sequential reviewed increments)
 
-- [ ] Integrate report assembly and plotting first.
+- [ ] Sol prepares one bounded task card at a time.
+- [ ] Luna first amends the adapter capabilities to expose generic named branch
+      targets and intermediate representations. The active detector now uses an
+      FFT high-pass ConvNeXt branch, while NPR remains a possible replacement or
+      additional branch, so Wave 0's NPR-specific methods are too narrow.
+- [ ] Replace branch-specific protocol methods with generic
+      `attribution_targets()` and `intermediate_representations()` capability
+      results keyed by canonical branch names; keep `branch_subset_logits()`
+      generic over those same names.
+- [ ] Luna then implements, in order: robustness aggregation, branch
+      contributions, attention rollout, Integrated Gradients, and Grad-CAM.
+- [ ] Sol reviews and accepts each increment before Luna starts the next one.
+- [ ] Shared facades are updated only after their underlying implementations
+      pass review.
+- [ ] Parent review gate: verify consistent validation, dtype/device behavior,
+      logit targeting, hook cleanup, output contracts, deterministic behavior,
+      and architecture independence across all implementations.
+
+#### Wave 3: Sequential composition
+
+- [ ] Add plot generation and output assembly on top of the accepted evaluation
+      report schemas.
 - [ ] Integrate robustness report generation second.
 - [ ] Implement deletion/insertion faithfulness after raw-image scoring and
       deterministic-context contracts are stable.
-- [ ] Add standalone CLIs only after report and serialization APIs are accepted.
+- [ ] Add JSONL parsing and standalone CLIs only after report and serialization
+      APIs are accepted.
 - [ ] Parent review gate: run the complete model-free workflow from prediction
       fixtures to metrics/plots and from a toy model/image to explanation maps,
       faithfulness curves, rendering, and JSON.
 
-#### Wave 4: Final-model adapter (sequential, blocked on model merge)
+#### Wave 4: Final-model adapter (sequential, blocked on final model decision)
 
-- [ ] Confirm the model team's final detector and preprocessing contracts before
-      assigning Phase 8.
-- [ ] Assign one worker to the architecture adapter; do not split dual-view
+- [ ] Confirm whether the final detector is semantic + frequency, semantic +
+      NPR, or semantic + frequency + NPR, along with its preprocessing and
+      checkpoint contracts, before assigning Phase 8.
+- [ ] Assign one Luna increment to the architecture adapter; keep branch-specific
       preprocessing, target selection, crop handling, branch ablation, and
-      checkpoint validation across workers.
-- [ ] Parent review gate: validate explanations against a real checkpoint and
+      checkpoint validation together.
+- [ ] Sol review gate: validate explanations against a real checkpoint and
       deterministic samples, including unsupported-capability behavior.
 
-#### Wave 5: Product integration (parallel where isolated)
+#### Wave 5: Product integration (sequential)
 
-- [ ] Assign separate workers to `predict.py`, `app.py`, and integration
-      documentation/tests only after the adapter API is stable.
-- [ ] Route any required shared-adapter changes through the parent review rather
-      than allowing product workers to modify it independently.
+- [ ] Integrate `predict.py` and complete its Sol review first.
+- [ ] Integrate `app.py` only after the CLI path is accepted.
+- [ ] Add integration documentation and end-to-end tests last.
+- [ ] Route required shared-adapter changes through a separate reviewed Luna
+      correction rather than changing the adapter incidentally in product work.
 - [ ] Parent review gate: run CLI, Gradio prediction function, focused tests, and
       the complete test suite before marking explainability integration complete.
 
@@ -447,8 +481,7 @@ For every worker iteration, the parent agent must:
       accepted contracts, and previous handoff before preparing the task.
 - [ ] Create a task card using the template below and derive the worker prompt
       from current code rather than copying stale instructions.
-- [ ] Assign exact owned files and prohibited files; parallel workers must have
-      disjoint ownership.
+- [ ] Assign exact owned and prohibited files for one bounded Luna increment.
 - [ ] State required tests and objective acceptance criteria in the prompt.
 - [ ] Review the complete worker diff rather than relying only on its summary.
 - [ ] Run focused tests, `git diff --check`, and the full suite at appropriate
@@ -467,6 +500,10 @@ only stable requirements belong permanently in this file.
 ```text
 Wave / phase:
 Status: pending | in_progress | review | completed | blocked
+Base commit:
+Implementation model: GPT-5.6 Luna xhigh
+Review model: GPT-5.6 Sol medium
+Previous accepted handoff:
 Objective:
 Prerequisites satisfied:
 Owned files:
@@ -481,7 +518,8 @@ Expected handoff:
 ### Worker-prompt template
 
 ```text
-Implement <wave/phase and bounded task> on the current explainability branch.
+As the sole active GPT-5.6 Luna xhigh implementation worker, implement
+<wave/phase and bounded task> on the current explainability branch.
 
 Read first:
 - TODO.md section 5, especially <relevant phase>
@@ -525,22 +563,20 @@ Integration requirements:
 Recommended next iteration:
 ```
 
-### Parallel-work rules
+### Sequential role-switch rules
 
-- [ ] Parallelize only after shared contracts have passed a parent review gate.
-- [ ] Parallelize only tasks with disjoint files and independently testable
-      outputs.
-- [ ] Use isolated branches/worktrees for concurrent implementation when the
-      worker environment supports them; otherwise run workers sequentially.
-- [ ] Keep work sequential when a public schema/protocol is changing, multiple
-      tasks need one facade or entry point, architecture-specific preprocessing
-      is involved, or a task consumes another unstable API.
-- [ ] Integrate reviewed work in dependency order even when implementation ran
-      concurrently.
+- [ ] Keep exactly one Luna implementation task active.
+- [ ] Sol owns planning, API decisions, review, acceptance, and handoff.
+- [ ] Luna owns bounded implementation and focused tests.
+- [ ] Return review findings to the same Luna session for correction.
+- [ ] Use a fresh Luna context after an increment is accepted.
+- [ ] Do not begin the next increment until the current Sol review gate passes.
+- [ ] Do not combine unrelated algorithm or integration work in one diff.
+- [ ] Integrate accepted work strictly in dependency order.
 
 ### Merge-safety rules
 
-- [ ] Land phases as small, independently tested commits.
+- [ ] Land sequential increments as small, independently tested commits.
 - [ ] Do not modify model or training-loop files during Phases 0-7.
 - [ ] Keep `src/explainability/` free of imports from `training/`.
 - [ ] Keep metrics independent of PyTorch where practical.
@@ -553,15 +589,12 @@ Recommended next iteration:
 
 ## 6. Integration & Polish
 
-- [ ] End-to-end run: real dataset -> `training/train_semantic.py` +
-      `training/train_npr.py` -> per-stream checkpoints -> joint
-      fine-tuning -> `training/evaluate.py` robustness report ->
-      `predict.py --checkpoint ...` -> `app.py`.
-- [ ] Decide the fate of `src/models/frequency_stream.py` and
-      `training/train_frequency.py` now that `npr_stream.py`/`train_npr.py`
-      supersede them -- either delete both (and their `tests/test_data.py`
-      smoke-test coverage) or explicitly keep the FFT stream as a third,
-      optional stream rather than a replacement.
+- [ ] End-to-end run: real dataset -> train selected active streams -> final
+      fusion/joint training -> strict checkpoint load -> robustness report ->
+      explainability CLI -> Gradio app.
+- [ ] Decide and document the final branch topology: frequency, NPR, or both.
+      Remove obsolete training paths only after that decision and checkpoint
+      compatibility are confirmed.
 - [ ] Load a real checkpoint into `app.py` (currently always runs stub/random
       weights).
 - [ ] Restrict `app.py` image upload to `.jpg`/`.png`/`.webp` at the component
