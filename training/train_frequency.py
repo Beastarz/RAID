@@ -121,6 +121,19 @@ def main(argv: Optional[List[str]] = None) -> None:
             elapsed_ms,
         )
 
+    model.eval()
+    validation_loss = 0.0
+    correct = total = 0
+    with torch.no_grad():
+        for images, labels in datamodule.val_dataloader():
+            images, labels = images.to(device), labels.to(device)
+            logits = model(images)
+            validation_loss += loss_fn(logits, labels).item() * labels.size(0)
+            correct += ((torch.sigmoid(logits) >= 0.5) == (labels >= 0.5)).sum().item()
+            total += labels.numel()
+    logger.info("validation_loss=%.4f validation_accuracy=%.3f",
+                validation_loss / max(total, 1), correct / max(total, 1))
+
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = checkpoint_dir / "frequency_stream.pt"

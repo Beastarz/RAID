@@ -18,7 +18,7 @@ semantic:
 
 frequency:
   pretrained: true
-  freeze_backbone: true
+  freeze_backbone: false
   highpass_ratio: 0.08
   output_dim: 768
 
