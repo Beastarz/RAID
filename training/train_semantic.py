@@ -18,6 +18,7 @@ teammates can iterate on a stream each without touching the same file.
 """
 
 import argparse
+import copy
 import sys
 import time
 from pathlib import Path
@@ -106,6 +107,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     model.train()
     global_step = 0
+    best_accuracy = -1.0
+    best_stream_state = None
     for epoch in range(1, args.epochs + 1):
         model.train()
         for images, labels in train_loader:
@@ -135,13 +138,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                 validation_loss += loss_fn(logits, labels).item() * labels.size(0)
                 correct += ((torch.sigmoid(logits) >= 0.5) == (labels >= 0.5)).sum().item()
                 total += labels.numel()
+        accuracy = correct / max(total, 1)
         logger.info("epoch=%d validation_loss=%.4f validation_accuracy=%.3f",
-                    epoch, validation_loss / max(total, 1), correct / max(total, 1))
+                    epoch, validation_loss / max(total, 1), accuracy)
+        if accuracy > best_accuracy:
+            best_accuracy = accuracy
+            best_stream_state = copy.deepcopy(model.stream.state_dict())
 
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = checkpoint_dir / "semantic_stream.pt"
-    torch.save(model.stream.state_dict(), checkpoint_path)
+    torch.save(best_stream_state or model.stream.state_dict(), checkpoint_path)
     logger.info("Saved semantic stream checkpoint to %s (mock weights, not yet meaningful)", checkpoint_path)
 
 
