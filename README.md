@@ -1,4 +1,4 @@
-# AI Image Detector
+# RAID - Robust AI-generated Image Detector
 
 Modular dual-stream framework for robust AI-generated image detection, designed to
 stay accurate under real-world post-processing (JPEG compression, blur, rescaling,
@@ -161,7 +161,12 @@ python predict.py --image test_sample.jpg
 Expected output — one JSON line, e.g.:
 
 ```json
-{"filename": "test_sample.jpg", "ai_probability": 0.49, "label": "Authentic", "execution_time_ms": 8.7}
+{
+  "filename": "test_sample.jpg",
+  "ai_probability": 0.49,
+  "label": "Authentic",
+  "execution_time_ms": 8.7
+}
 ```
 
 You can also point `--image` at a directory to run batch inference (one JSON line
