@@ -109,7 +109,7 @@ class RobustnessTransforms:
             ),
             # Some source images are narrower than the fixed crop size. Pad
             # first so the robustness transform works for every aspect ratio.
-            A.PadIfNeeded(min_height=crop_size, min_width=crop_size, border_mode=0, p=p),
+            A.PadIfNeeded(min_height=crop_size, min_width=crop_size, border_mode=0, p=1.0),
             A.CenterCrop(height=crop_size, width=crop_size, p=p),
             *_tail(image_size),
         ]
