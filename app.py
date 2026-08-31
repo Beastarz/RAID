@@ -26,7 +26,7 @@ from predict import (
 DEVICE = get_device()
 
 # Prefer the real, jointly-trained semantic + Bayar+SRM fusion checkpoint (see
-# MODEL_README.md) over the stub DetectorPipeline, when all three files have
+# README.md) over the stub DetectorPipeline, when all three files have
 # been downloaded into checkpoints/. Falls back to stub weights (meaningless
 # predictions) if they're missing, so the app still launches offline.
 _SEMANTIC_CKPT = "checkpoints/semantic_stream.pt"
@@ -42,7 +42,7 @@ else:
     MODEL_STATUS = (
         "**No pretrained checkpoint found in `checkpoints/` -- running on randomly "
         "initialized stub weights, predictions are not meaningful.** "
-        "See MODEL_README.md to download the real weights."
+        "See README.md to download the real weights."
     )
 
 EXAMPLE_IMAGES = [

@@ -107,3 +107,34 @@ other three.
   something legible to someone who just wants a straight "real or fake"
   answer — clear labels, a simple probability, a visual explanation instead
   of a wall of numbers — took as much thought as the model itself.
+
+## What's next
+
+- **Finish joint fusion training.** The semantic and NPR streams have each
+  been validated independently (NPR alone is already hitting ~0.91 val AUC),
+  but they haven't been fine-tuned together through `fusion.py` yet — that's
+  the step that turns "two decent models" into one detector that's actually
+  better than either alone.
+- **Settle the frequency branch.** We need to run the resize/downscale
+  stress test on the NPR stream and decide, for real, whether NPR alone
+  holds up or whether we fall back to the Bayar constrained-conv + SRM
+  frontend we already built a swap-in point for.
+- **Load a real checkpoint into the app.** `app.py` still runs on stub
+  weights — wiring the trained, fused checkpoint into the Gradio demo (and
+  the CLI) is what turns this from "a set of validated components" into
+  something a non-technical user can actually try.
+- **Ship real explainability, not a placeholder.** The saliency overlay in
+  the demo today is a mock. We've already built the harder, model-independent
+  half (metrics, calibration, rendering, contracts) — what's left is Grad-CAM,
+  attention rollout, and branch-contribution analysis wired to the real
+  fused model, so "this was probably made by AI" comes with a "here's why."
+- **Run the full robustness benchmark end-to-end.** We've built the
+  degradation transforms and the eval scaffolding; we haven't yet generated
+  the actual degradation curves (accuracy vs. JPEG quality, blur sigma, crop
+  ratio) that prove the "robust" in RAID holds up on the full spectrum,
+  not just spot checks.
+- **Scale past the smoke-test dataset.** Training so far has used a partial,
+  hackathon-sized pull from SID_Set. Pulling the full dataset and retraining
+  at scale is the biggest lever left for real accuracy gains.
+- **Add CI.** Once the architecture stabilizes, wire `pytest tests/` into
+  GitHub Actions so regressions get caught before they hit a checkpoint.
