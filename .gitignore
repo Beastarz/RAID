@@ -23,6 +23,8 @@ checkpoints/
 *.pth
 *.safetensors
 
+data/
+
 # Datasets & large local artifacts
 datasets/
 *.npy
