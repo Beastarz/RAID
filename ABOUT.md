@@ -138,3 +138,7 @@ other three.
   at scale is the biggest lever left for real accuracy gains.
 - **Add CI.** Once the architecture stabilizes, wire `pytest tests/` into
   GitHub Actions so regressions get caught before they hit a checkpoint.
+
+## Built With
+
+#python #pytorch #torchvision #vit #convnext #albumentations #huggingface #datasets #gradio #scikitlearn #numpy #pillow #pyyaml #pytest

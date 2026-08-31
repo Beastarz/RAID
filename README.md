@@ -33,8 +33,75 @@ a shared `BaseFeatureStream` interface:
 
 Both streams feed a fusion layer and a compact classification head, capped
 under a **2B parameter budget** (target ~337M) so the whole pipeline stays
-fast enough for hackathon-scale, single-GPU iteration. Full module ownership
-and data-flow diagrams live in [`BLUEPRINT.md`](BLUEPRINT.md); the shared
+fast enough for hackathon-scale, single-GPU iteration.
+
+### Architecture
+
+This is the original blueprint design the project was scaffolded from (backbone
+names/params are the initial targets — see the stream bullets above and
+[Limitations](#limitations--what-wed-improve-with-more-time) for what the
+active implementation actually uses):
+
+```mermaid
+flowchart TD
+    A[Input Image] --> B{Mode}
+    B -->|Training| C[Robustness Augmentation Engine]
+    C -->|"JPEG, Blur, Rescale, Noise, Jitter, Crop"| D
+    B -->|Inference| D
+
+    subgraph PRE[Preprocessing]
+        D[Standardization Preprocessor]
+    end
+
+    D -->|512x512 Standard Tensor| E[Dual-Stream Feature Extractor]
+
+    subgraph EXTRACT[Dual-Stream Feature Extraction]
+        E --> F
+        E --> G
+        subgraph S1[Stream 1 — Semantic]
+            F[High-Level Foundation Backbone] -->|DINOv2-Large / 304M Params| H[Global Token & ViT Patch Embeddings]
+        end
+        subgraph S2[Stream 2 — Frequency]
+            G[Mid-Level Frequency Stream] --> I[2D FFT Mid-Band Pass Masking]
+            I --> J[ConvNeXt-Tiny Backbone / 28M Params]
+            J --> K[Mid-Frequency Feature Map]
+        end
+    end
+
+    subgraph FUSE[Fusion & Output]
+        H --> L[Cross-Attention Feature Fusion Layer]
+        K --> L
+        L --> M[Fused Representation Vector]
+        M --> N[Classification Head: MLP Layer]
+        M --> O[Explainability Head: Grad-CAM / ViT Attention Map]
+        N --> P[Prediction: Probability AI-Generated vs Authentic]
+        O --> Q[Diagnostic Heatmap: Spatial Artifact Localization]
+    end
+
+    classDef input fill:#e0e7ff,stroke:#4338ca,stroke-width:1px,color:#1e1b4b;
+    classDef mode fill:#ffffff,stroke:#db2777,stroke-width:1.5px,color:#1e1b4b;
+    classDef pre fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef stream1 fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef stream2 fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+    classDef fuse fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
+
+    class A input;
+    class B mode;
+    class C,D pre;
+    class E pre;
+    class F,H stream1;
+    class G,I,J,K stream2;
+    class L,M,N,O,P,Q fuse;
+
+    style PRE fill:#f5f3ff,stroke:#a78bfa,stroke-width:1px,color:#4c1d95
+    style EXTRACT fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155
+    style S1 fill:#eff6ff,stroke:#60a5fa,stroke-width:1px,color:#1e3a5f
+    style S2 fill:#fdf4ff,stroke:#e879f9,stroke-width:1px,color:#4a044e
+    style FUSE fill:#ecfdf5,stroke:#34d399,stroke-width:1px,color:#064e3b
+```
+
+Full module ownership and data-flow diagrams for the current implementation
+live in [`BLUEPRINT.md`](BLUEPRINT.md); the shared
 tensor contracts and coding conventions the team held each other to are in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md); the fuller writeup of what we
 learned and why we made the calls we did is in [`ABOUT.md`](ABOUT.md).
