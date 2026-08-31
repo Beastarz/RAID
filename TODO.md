@@ -202,7 +202,7 @@ training entry points until the integration phases.
       verified expected values.
 - [x] Acceptance: validated prediction records can produce a complete
       JSON-serializable report without importing or loading a PyTorch model;
-      JSONL parsing/file orchestration remains Phase 7 work.
+      JSONL parsing/file orchestration is implemented in Phase 7 below.
 
 Suggested files: `training/evaluation/metrics.py`,
 `training/evaluation/calibration.py`, `training/evaluation/schemas.py`,
@@ -323,14 +323,14 @@ Suggested files: `src/explainability/faithfulness.py` and
 
 ### Phase 7: Standalone CLI and outputs
 
-- [ ] Add an offline report command that consumes prediction JSONL and writes
+- [x] Add an offline report command that consumes prediction JSONL and writes
       `report.json`, metrics/robustness CSV, and plot artifacts without loading
       a model.
-- [ ] Add a rendering command that consumes explanation metadata/maps and writes
+- [x] Add a rendering command that consumes explanation metadata/maps and writes
       per-sample visual artifacts.
-- [ ] Store per-image outputs under stable sample-ID directories and reference
+- [x] Store per-image outputs under stable sample-ID directories and reference
       them by path from JSON rather than embedding large arrays by default.
-- [ ] Acceptance: both commands run against fixtures before model integration.
+- [x] Acceptance: both commands run against fixtures before model integration.
 
 Proposed commands:
 
@@ -531,19 +531,36 @@ Wave 2 implementation handoff and parent review:
 - Architecture-independence review found no implementation coupling; the only
   branch-topology mention was the explanatory docstring in
   `branch_contributions.py` stating that it does not know model topologies.
-- Parent review gate accepted for Wave 2. Phase 6, Wave 3, final-model adapter,
-  and product integration remain pending.
+- Parent review gate accepted for Wave 2. Phase 6, the final-model adapter, and
+  product integration remain pending; Wave 3 is accepted below.
 
 #### Wave 3: Sequential composition
 
-- [ ] Add plot generation and output assembly on top of the accepted evaluation
+- [x] Add plot generation and output assembly on top of the accepted evaluation
       report schemas.
-- [ ] Integrate robustness report generation second.
-- [ ] Add JSONL parsing and standalone CLIs only after report and serialization
+- [x] Integrate robustness report generation second.
+- [x] Add JSONL parsing and standalone CLIs only after report and serialization
       APIs are accepted.
-- [ ] Parent review gate: run the complete model-free workflow from prediction
+- [x] Parent review gate: run the complete model-free workflow from prediction
       fixtures to metrics, plots, robustness outputs, rendering, JSON, CSV, and
       standalone CLI artifacts. Deletion/insertion moves after the adapter gate.
+
+Wave 3 implementation handoff and parent review:
+
+- Added deterministic ROC, PR, confusion-matrix, reliability, and robustness
+  curve plotting over validated model-free reports.
+- Added strict prediction JSONL read/write, report output assembly, metrics and
+  robustness CSV/JSON, standard PNG artifacts, and the documented report and
+  explanation-rendering CLIs. Rendering keeps stable per-sample directories and
+  rejects unsafe artifact paths.
+- Hardened rendering against duplicate destinations, escaped valid contract IDs
+  deterministically for filesystem paths, and preserved clean-baseline report
+  semantics for condition-aware evaluation outputs.
+- Focused Wave 3 suite: `20 passed`; full tracked suite: `210 passed, 4 skipped`;
+  `compileall` and `git diff --check` pass.
+- Wave 3 remains model-independent. Phase 6 faithfulness, the final-model
+  adapter, and application integration remain pending behind the published
+  checkpoint bundle gate.
 
 #### Wave 3.5: Final architecture and checkpoint gate
 

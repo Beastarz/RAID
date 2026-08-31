@@ -15,6 +15,12 @@ from src.explainability.branch_contributions import (
     compute_branch_contributions,
 )
 from src.explainability.gradcam import GradCAMResult, grad_cam
+from src.explainability.serialization import (
+    explanation_envelope_from_dict,
+    read_explanation_json,
+    read_prediction_jsonl,
+    write_prediction_jsonl,
+)
 
 __all__ = [
     "DEFAULT_MAX_BRANCHES",
@@ -27,4 +33,8 @@ __all__ = [
     "integrated_gradients",
     "GradCAMResult",
     "grad_cam",
+    "explanation_envelope_from_dict",
+    "read_explanation_json",
+    "read_prediction_jsonl",
+    "write_prediction_jsonl",
 ]
