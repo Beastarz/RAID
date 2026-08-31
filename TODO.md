@@ -37,15 +37,22 @@ follow.
 - [x] `tests/test_data.py` — minimal critical-path tests: augmentation output
       shape contract, dataset label/shape contract, and a smoke test per
       stream-training script (`train_semantic.py`/`train_frequency.py`,
-      including checkpoint-file creation). Predates `train_npr.py` and doesn't
-      cover it yet -- see §1 below. Still covers the now-superseded
-      `train_frequency.py`; that coverage can move to `train_npr.py` once
-      `frequency_stream.py`/`train_frequency.py` are removed for good.
-- [x] `training/data/import_hf.py` — streams a real Hugging Face dataset
-      (`RAID-techjam/SID_Set`) into a local `image_path,label` manifest CSV,
-      collapsing its 3-way label to the project's binary contract.
+      including checkpoint-file creation).
+- [x] `training/data/import_hf.py` — streams a real image dataset from the
+      Hugging Face Hub (default `RAID-techjam/SID_Set`), exports a `--limit`-sized
+      JPEG subset, and writes an `AIGCDataset`-compatible `manifest.csv`
+      (remaps SID_Set's 3-way label onto the project's binary contract).
 - [x] `training/data/shuffle_manifest.py` — shuffles a manifest's rows (seeded)
       so `AIGCDataModule`'s contiguous train/val split isn't class-skewed.
+- [x] `src/models/semantic_stream.py` — replaced the pool+linear stub with a
+      real torchvision ViT-B/16 backbone (`pretrained`/`freeze_backbone`/
+      `unfreeze_last_n_blocks` config, `parameter_counts()` for logging),
+      keeping the `[B, 3, H, W] -> [B, 1024]` contract.
+- [x] Populate `configs/model_config.yaml` (was empty) with semantic/frequency/
+      fusion hyperparameters.
+- [x] `training/train_semantic.py` — real multi-epoch (`--epochs`) training
+      loop with a post-epoch validation pass (loss + accuracy), reading the new
+      `semantic` config block; capped by `--steps` total optimizer steps.
 - [x] `training/train_npr.py` — real (not mock) short training loop for the NPR
       stream: train/val split, AdamW + cosine LR, pos_weight-balanced BCE,
       per-epoch val loss/accuracy/AUC, checkpoints only on best val AUC. Trained
@@ -53,12 +60,14 @@ follow.
       reached ~0.91 after 3 epochs.
 - [x] `training/test_npr.py` — evaluates a trained NPR checkpoint on its
       held-out val split.
+- [x] `tests/test_models.py` — output-contract, non-RGB-rejection,
+      freeze/unfreeze-last-N-blocks, and parameter-count tests for
+      `SemanticStream`, plus an output-contract test for `DetectorPipeline`.
 
 ## 1. Data & Augmentations (`training/data/`) — remaining
 
-- [ ] `import_hf.py` only exports a `--limit`-sized sample count, not a byte
-      budget -- pull the full ~32GB/~137K-sample target (or more) once ready,
-      and re-run `train_npr.py`/`test_npr.py` against it.
+- [ ] Run `training/data/import_hf.py` against the full `SID_Set` (or another
+      source) at training scale, not just a `--limit`-sized smoke subset.
 - [ ] `tests/test_data.py` doesn't cover `train_npr.py` or the new
       `import_hf.py`/`shuffle_manifest.py` scripts -- add coverage.
 - [ ] Broaden `tests/test_data.py` beyond the minimal critical-path set (e.g.
@@ -66,24 +75,24 @@ follow.
 
 ## 2. Model Backbones (`src/models/`)
 
-- [ ] `semantic_stream.py` — replace the pool+linear stub with a DINOv2 / ViT
-      backbone (frozen or fine-tuned), keeping the `[B, 3, H, W] -> [B, 1024]`
-      contract.
+
 - [ ] `npr_stream.py` — run the M3 resize/downscale stress test (go/no-go, see
       npr_stream_guide.md §7): does val AUC hold up (within ~0.05) when images
       go through a downscale-then-upscale round trip before the crop? If it
       collapses toward 0.5, swap the frontend to Bayar constrained-conv + SRM
       filters via the already-built `frontend=` injection point -- no other
       code changes needed.
-- [ ] `fusion.py` — upgrade concat+linear to cross-attention fusion, keeping the
-      `-> [B, 512]` contract; note its `freq_dim` default (768) needs
-      `freq_dim=256` (or `NPRStream.output_dim`) to match NPR's default backbone.
 - [ ] Populate `configs/model_config.yaml` (currently empty) with backbone and
       fusion hyperparameters.
+- [ ] `fusion.py` — upgrade concat+linear to cross-attention fusion, keeping the
+      `-> [B, 512]` contract.
 - [ ] Verify total parameter count stays under the 2B budget (target ~337M) once
-      real backbones are in — add an automated check.
-- [ ] `tests/test_models.py` — shape/contract tests for each stream, fusion, and
-      `DetectorPipeline`, including a frozen-weights determinism test.
+      the frequency backbone is in — add an automated check (semantic ViT-B/16
+      alone is ~86M; `parameter_counts()` on `SemanticStream` already reports
+      its share).
+- [ ] `tests/test_models.py` — add shape/contract tests for `frequency_stream.py`
+      and `fusion.py`, plus a frozen-weights determinism test, once those
+      backbones are real.
 
 ## 3. Training (`training/train_semantic.py`, `training/train_npr.py`)
 
@@ -95,16 +104,16 @@ test.
 
 - [x] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`, plus
       a mock loop (real forward/BCE-loss/backward/optimizer.step over a few
-      `--steps`) that proves the data flow end-to-end, for `train_semantic.py`.
-- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt` — mock
-      weights, not yet meaningful).
+      `--steps`) that proves the data flow end-to-end, for each stream.
+- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt`,
+      `checkpoints/frequency_stream.pt`) — currently mock weights, not yet
+      meaningful.
+- [x] `train_semantic.py` — real multi-epoch loop (`--epochs`) with
+      post-epoch validation loss/accuracy logging.
 - [x] `train_npr.py` — full real per-stream training loop: AdamW + cosine LR
       schedule, multi-epoch (5 by default), train/val split, real val
       loss/accuracy/AUC curves, checkpointing on best val AUC
       (`checkpoints/npr_stream.pt` + `checkpoints/npr_head.pt`).
-- [ ] Give `train_semantic.py` the same real-training upgrade `train_npr.py`
-      already got (epochs, val split, metrics, best-checkpoint saving) once a
-      real semantic backbone lands.
 - [ ] Once both streams are validated individually: joint fine-tuning of the
       fused `DetectorPipeline` (`fusion.py` + both streams together), and
       wiring `training/evaluate.py` to load the two per-stream checkpoints
