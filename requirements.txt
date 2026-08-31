@@ -7,9 +7,11 @@ albumentations
 pyyaml
 scikit-learn
 matplotlib
+numpy
 
 # Frontend
 gradio
 
 # Testing
 pytest
+datasets
