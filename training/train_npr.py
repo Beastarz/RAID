@@ -79,9 +79,12 @@ class NPRCropDataset(Dataset):
         crop_size: int = 256,
         num_synthetic_samples: int = 32,
         seed: int = 42,
+        resize_augmentation: bool = False,
     ) -> None:
         self.crop_size = crop_size
         self._rng = np.random.default_rng(seed)
+        self.resize_augmentation = resize_augmentation
+        self.train_indices = set()
         self._samples: List[Tuple[Optional[Path], int]] = []
 
         if manifest_path and Path(manifest_path).exists():
@@ -129,6 +132,11 @@ class NPRCropDataset(Dataset):
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         path, label = self._samples[index]
         image = self._load_native_image(index, path)
+        if self.resize_augmentation and index in self.train_indices:
+            scale = float(self._rng.uniform(0.25, 0.75))
+            h, w = image.shape[:2]
+            small = Image.fromarray(image).resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.BILINEAR)
+            image = np.asarray(small.resize((w, h), Image.BILINEAR), dtype=np.uint8)
         crop = self._random_crop(image)
         tensor = torch.from_numpy(crop.astype(np.float32) / 255.0).permute(2, 0, 1)  # [3, crop, crop] in [0, 1]
         label_tensor = torch.tensor([float(label)], dtype=torch.float32)
@@ -211,6 +219,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=None, help="Override config's lr")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="AdamW weight decay")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop if val AUC doesn't improve for this many consecutive epochs (0 disables)",
+    )
     parser.add_argument("--crop-size", type=int, default=256, help="Native-resolution crop size fed to NPRStream")
     parser.add_argument(
         "--backbone", type=str, default="resnet_shallow", choices=["resnet_shallow", "convnext_tiny"]
@@ -250,6 +264,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         seed=config["seed"],
     )
     train_subset, val_subset = _split_dataset(full_dataset, data_cfg["val_split"], config["seed"])
+    full_dataset.train_indices = set(train_subset.indices)
     run_logger.info("NPR dataset split: %d train / %d val", len(train_subset), len(val_subset))
 
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=config["num_workers"])
@@ -278,6 +293,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     checkpoint_path = checkpoint_dir / "npr_stream.pt"
     head_checkpoint_path = checkpoint_dir / "npr_head.pt"
     best_val_auc = float("-inf")
+    epochs_without_improvement = 0
 
     model.train()
     for epoch in range(1, args.epochs + 1):
@@ -328,6 +344,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if is_best:
             if not np.isnan(current_auc):
                 best_val_auc = current_auc
+            epochs_without_improvement = 0
             torch.save(model.stream.state_dict(), checkpoint_path)
             # The stream-only checkpoint above matches train_semantic.py /
             # train_frequency.py's convention (a future DetectorPipeline
@@ -337,6 +354,18 @@ def main(argv: Optional[List[str]] = None) -> None:
             # shared checkpoint format.
             torch.save(model.head.state_dict(), head_checkpoint_path)
             run_logger.info("New best (val_auc=%.4f) -- saved checkpoint to %s", current_auc, checkpoint_path)
+        elif not np.isnan(current_auc):
+            # Only a real (non-NaN) AUC that failed to improve counts against
+            # patience -- a degenerate val split shouldn't trigger an early
+            # stop on its own.
+            epochs_without_improvement += 1
+            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+                run_logger.info(
+                    "Early stopping: val_auc hasn't improved for %d epoch(s) (best=%.4f)",
+                    epochs_without_improvement,
+                    best_val_auc,
+                )
+                break
 
     run_logger.info("Training complete. Best val_auc=%.4f, checkpoint at %s", best_val_auc, checkpoint_path)
 

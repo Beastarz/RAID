@@ -97,19 +97,50 @@ in parallel against a stable interface while the remaining heavy models land.
 - `training/test_npr.py` — evaluates a trained NPR checkpoint (both files above)
   on the exact same held-out val split `train_npr.py` used, reporting loss,
   accuracy, and AUC.
+- `src/models/frontend_bayar.py` — `BayarSRMFrontend`, a swappable alternative to
+  NPR's residual frontend, dropped into `NPRStream(frontend=...)` with no other
+  code changes. `training/train_bayar_srm.py` trains this stream the same way
+  `train_npr.py` trains the NPR one (own crop-only dataset, AdamW + cosine
+  schedule, checkpoint on best val AUC), saving `checkpoints/bayar_srm_stream.pt`
+  + `checkpoints/bayar_srm_head.pt`. `training/evaluate_bayar_srm.py` runs the
+  same M3 resize/downscale stress test as `evaluate_npr.py` against it.
+- `training/train_fusion.py` — trains `src/models/fusion.py`'s real
+  `FeatureFusion` + classifier head on top of *frozen* pretrained semantic and
+  Bayar+SRM streams, saving `checkpoints/detector_fusion.pt`. This is the one
+  path where joint fusion training is real rather than a stub — see
+  [`MODEL_README.md`](MODEL_README.md) for pretrained weights and results.
 - `training/evaluate.py` — a light mock sweep through the eval-mode
   `RobustnessTransforms`, logging shapes/probabilities per severity level; real
   metric computation (`training/evaluation/`) isn't implemented yet.
 - `training/logging_utils.py` — shared logger setup; the data/training path
   logs dataset/datamodule sizes at INFO and per-sample augmentation params at
   DEBUG, for tracing data flow and debugging.
+- `predict.py --bayar` — loads the semantic + Bayar+SRM + fusion checkpoint
+  trio above into a `BayarFusionModel` inference wrapper instead of the default
+  `DetectorPipeline`. This is currently the only inference path backed by
+  jointly-trained, non-stub weights; see the next paragraph and
+  [`MODEL_README.md`](MODEL_README.md).
 
-**Not yet implemented:** joint fine-tuning of the fused `DetectorPipeline` (and loading the per-stream
-checkpoints into it for evaluation), a real (non-`import_hf.py`-subset) image
+**Not yet implemented:** joint fine-tuning of the default semantic+frequency-stream
+`DetectorPipeline` (and loading the per-stream checkpoints into it for evaluation)
+— the semantic + Bayar+SRM path above covers this separately, via `predict.py --bayar`
+rather than the plain `DetectorPipeline` — a real (non-`import_hf.py`-subset) image
 dataset for full training runs, the robustness metrics/benchmark suite
 (`training/evaluation/metrics.py`, `robustness_suite.py`), and the real
 explainability visualizer (`src/explainability/`) — these currently exist only
 as empty module stubs or mocks.
+
+**Pretrained Bayar+SRM fusion weights are published** on the Hugging Face Hub
+(`RAID-techjam/raid-detector-fusion`) and downloadable via `MODEL_README.md`'s
+instructions. Smoke-tested in this repo: `predict.py --bayar` with the downloaded
+checkpoints gives clean real/AI-generated separation on held-out `SID_Set` samples
+(e.g. 4/5 real samples scored under 0.36 AI-probability, 4/5 AI-generated samples
+scored above 0.99), consistent with the ~0.87 clean AUC reported in
+`MODEL_README.md`. Note the HF repo does **not** currently include
+`bayar_srm_head.pt` (only `semantic_stream.pt`, `bayar_srm_stream.pt`, and
+`detector_fusion.pt`) — that file is only needed to reproduce
+`training/evaluate_bayar_srm.py`'s standalone stress test, not for
+`predict.py --bayar` inference, which doesn't use it.
 
 The semantic stream can now be trained meaningfully (real ViT-B/16 backbone +
 real data via `import_hf.py`), but end-to-end predictions through
@@ -229,6 +260,28 @@ python predict.py --image test_data
 
 Pass `--checkpoint path/to/model.ckpt` once a trained checkpoint exists; without it,
 the model runs with randomly initialized stub weights.
+
+### 6b. Run inference with pretrained weights (Bayar+SRM fusion)
+
+The default `DetectorPipeline` above uses stub/random weights for the frequency
+stream and fusion layer, so its predictions aren't meaningful yet. A separate,
+real, jointly-trained pipeline — semantic (ViT-B/16) + Bayar+SRM forensic stream
++ fusion — is published on the Hugging Face Hub and gives meaningful predictions
+today:
+
+```bash
+pip install huggingface_hub
+hf download RAID-techjam/raid-detector-fusion --repo-type model --local-dir checkpoints
+
+python predict.py --image test_sample.jpg --bayar \
+  --checkpoint checkpoints/detector_fusion.pt \
+  --semantic-checkpoint checkpoints/semantic_stream.pt \
+  --bayar-checkpoint checkpoints/bayar_srm_stream.pt
+```
+
+See [`MODEL_README.md`](MODEL_README.md) for the full download/training/evaluation
+workflow and reported robustness numbers (~0.87 clean AUC on a 10K-sample
+`SID_Set` subset).
 
 ### 7. Launch the frontend
 
