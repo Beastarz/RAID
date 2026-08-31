@@ -32,7 +32,8 @@ ai-image-detector/
 │ │ ├── **init**.py
 │ │ ├── dataset.py # Custom Dataset class loading Real/AI images
 │ │ ├── augmentations.py # Robustness transform pipeline (Albumentations)
-│ │ └── datamodule.py # PyTorch DataLoader wrapper
+│ │ ├── datamodule.py # PyTorch DataLoader wrapper
+│ │ └── import_hf.py # Streams a HF dataset subset into a manifest CSV
 │ └── evaluation/ # Team Member C: Benchmark & Metrics
 │ ├── **init**.py
 │ ├── robustness_suite.py # Automated robustness test runner across transforms

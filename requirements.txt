@@ -13,3 +13,4 @@ gradio
 
 # Testing
 pytest
+datasets
