@@ -18,8 +18,12 @@ semantic:
 
 data:
   # Path to a manifest CSV with an `image_path,label` header (0=Real, 1=AI-Generated).
-  # Leave null to fall back to an in-memory synthetic dataset for pipeline testing.
-  manifest_path: null
+  # Falls back to an in-memory synthetic dataset for pipeline testing if this
+  # path doesn't exist yet. Produced by (see training/data/import_hf.py and
+  # training/data/shuffle_manifest.py):
+  #   python -m training.data.import_hf --split train --output data/sid_subset --limit <N>
+  #   python -m training.data.shuffle_manifest --input data/sid_subset/manifest.csv --output data/sid_subset/manifest_shuffled.csv
+  manifest_path: data/sid_subset/manifest_shuffled.csv
   num_synthetic_samples: 32
   val_split: 0.2
 
