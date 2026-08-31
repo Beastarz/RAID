@@ -6,6 +6,11 @@ from training.evaluation.metrics import (
     compute_binary_metrics,
 )
 from training.evaluation.report import build_evaluation_report
+from training.evaluation.robustness_report import RobustnessPoint, RobustnessReport
+from training.evaluation.robustness_suite import (
+    RobustnessBenchmark,
+    aggregate_robustness,
+)
 from training.evaluation.schemas import (
     BinaryMetrics,
     CalibrationMetrics,
@@ -24,4 +29,8 @@ __all__ = [
     "build_evaluation_report",
     "compute_binary_metrics",
     "compute_calibration_metrics",
+    "RobustnessBenchmark",
+    "RobustnessPoint",
+    "RobustnessReport",
+    "aggregate_robustness",
 ]

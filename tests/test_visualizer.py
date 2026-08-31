@@ -1,6 +1,7 @@
 """Focused tests for deterministic rendering and artifact persistence."""
 
 import json
+import sys
 
 import numpy as np
 import pytest
@@ -287,7 +288,12 @@ def test_artifact_store_rejects_sample_symlink_escape(tmp_path):
     outside.mkdir()
     output = tmp_path / "output"
     output.mkdir()
-    (output / "sample").symlink_to(outside, target_is_directory=True)
+    try:
+        (output / "sample").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        if sys.platform == "win32" and getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink creation privilege is unavailable")
+        raise
     store = ArtifactStore(output)
     rendered = colorize_heatmap(np.ones((2, 2)), coordinate_space="image", method_name="m")
 
