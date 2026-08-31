@@ -9,12 +9,18 @@ batch_size: 8
 num_workers: 0
 lr: 0.0001
 
-# Stream-specific settings. Keep pretrained=false for offline smoke tests.
+# Stream-specific settings.
 semantic:
-  pretrained: false
+  pretrained: true
   freeze_backbone: true
   unfreeze_last_n_blocks: 0
   output_dim: 1024
+
+frequency:
+  pretrained: true
+  freeze_backbone: true
+  highpass_ratio: 0.08
+  output_dim: 768
 
 data:
   # Path to a manifest CSV with an `image_path,label` header (0=Real, 1=AI-Generated).
@@ -23,7 +29,7 @@ data:
   # training/data/shuffle_manifest.py):
   #   python -m training.data.import_hf --split train --output data/sid_subset --limit <N>
   #   python -m training.data.shuffle_manifest --input data/sid_subset/manifest.csv --output data/sid_subset/manifest_shuffled.csv
-  manifest_path: data/sid_subset/manifest_shuffled.csv
+  manifest_path: data/sid_binary_5000/manifest.csv
   num_synthetic_samples: 32
   val_split: 0.2
 

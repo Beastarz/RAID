@@ -40,9 +40,11 @@ from training.logging_utils import setup_logger  # noqa: E402
 class FrequencyProbe(nn.Module):
     """FrequencyStream + a linear classification head, trained standalone."""
 
-    def __init__(self, feature_dim: int = OUTPUT_DIM) -> None:
+    def __init__(self, feature_dim: int = OUTPUT_DIM, pretrained: bool = False,
+                 freeze_backbone: bool = True, highpass_ratio: float = 0.08) -> None:
         super().__init__()
-        self.stream = FrequencyStream(output_dim=feature_dim)
+        self.stream = FrequencyStream(output_dim=feature_dim, pretrained=pretrained,
+                                      freeze_backbone=freeze_backbone, highpass_ratio=highpass_ratio)
         self.head = nn.Linear(feature_dim, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -85,7 +87,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     datamodule = AIGCDataModule(config, augmentations_config)
     train_loader = datamodule.train_dataloader()
 
-    model = FrequencyProbe().to(device)
+    frequency_config = config.get("frequency", {})
+    model = FrequencyProbe(
+        feature_dim=frequency_config.get("output_dim", OUTPUT_DIM),
+        pretrained=frequency_config.get("pretrained", False),
+        freeze_backbone=frequency_config.get("freeze_backbone", True),
+        highpass_ratio=frequency_config.get("highpass_ratio", 0.08),
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     logger.info("Model built: %d parameters, lr=%g", sum(p.numel() for p in model.parameters()), lr)
