@@ -211,6 +211,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=None, help="Override config's lr")
     parser.add_argument("--weight-decay", type=float, default=1e-4, help="AdamW weight decay")
     parser.add_argument("--epochs", type=int, default=5, help="Number of training epochs")
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=3,
+        help="Stop if val AUC doesn't improve for this many consecutive epochs (0 disables)",
+    )
     parser.add_argument("--crop-size", type=int, default=256, help="Native-resolution crop size fed to NPRStream")
     parser.add_argument(
         "--backbone", type=str, default="resnet_shallow", choices=["resnet_shallow", "convnext_tiny"]
@@ -278,6 +284,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     checkpoint_path = checkpoint_dir / "npr_stream.pt"
     head_checkpoint_path = checkpoint_dir / "npr_head.pt"
     best_val_auc = float("-inf")
+    epochs_without_improvement = 0
 
     model.train()
     for epoch in range(1, args.epochs + 1):
@@ -328,6 +335,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         if is_best:
             if not np.isnan(current_auc):
                 best_val_auc = current_auc
+            epochs_without_improvement = 0
             torch.save(model.stream.state_dict(), checkpoint_path)
             # The stream-only checkpoint above matches train_semantic.py /
             # train_frequency.py's convention (a future DetectorPipeline
@@ -337,6 +345,18 @@ def main(argv: Optional[List[str]] = None) -> None:
             # shared checkpoint format.
             torch.save(model.head.state_dict(), head_checkpoint_path)
             run_logger.info("New best (val_auc=%.4f) -- saved checkpoint to %s", current_auc, checkpoint_path)
+        elif not np.isnan(current_auc):
+            # Only a real (non-NaN) AUC that failed to improve counts against
+            # patience -- a degenerate val split shouldn't trigger an early
+            # stop on its own.
+            epochs_without_improvement += 1
+            if args.early_stopping_patience > 0 and epochs_without_improvement >= args.early_stopping_patience:
+                run_logger.info(
+                    "Early stopping: val_auc hasn't improved for %d epoch(s) (best=%.4f)",
+                    epochs_without_improvement,
+                    best_val_auc,
+                )
+                break
 
     run_logger.info("Training complete. Best val_auc=%.4f, checkpoint at %s", best_val_auc, checkpoint_path)
 
