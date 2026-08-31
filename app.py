@@ -7,16 +7,43 @@ user upload an image and view the predicted label, AI-probability, and a
 placeholder saliency heatmap.
 """
 
+from pathlib import Path
 from typing import Tuple
 
 import numpy as np
 import torch
 from PIL import Image
 
-from predict import IMAGE_SIZE, IMAGENET_MEAN, IMAGENET_STD, build_model, get_device
+from predict import (
+    BayarFusionModel,
+    IMAGE_SIZE,
+    IMAGENET_MEAN,
+    IMAGENET_STD,
+    build_model,
+    get_device,
+)
 
 DEVICE = get_device()
-MODEL = build_model(checkpoint=None, device=DEVICE)
+
+# Prefer the real, jointly-trained semantic + Bayar+SRM fusion checkpoint (see
+# MODEL_README.md) over the stub DetectorPipeline, when all three files have
+# been downloaded into checkpoints/. Falls back to stub weights (meaningless
+# predictions) if they're missing, so the app still launches offline.
+_SEMANTIC_CKPT = "checkpoints/semantic_stream.pt"
+_BAYAR_CKPT = "checkpoints/bayar_srm_stream.pt"
+_FUSION_CKPT = "checkpoints/detector_fusion.pt"
+USE_BAYAR = all(Path(p).exists() for p in (_SEMANTIC_CKPT, _BAYAR_CKPT, _FUSION_CKPT))
+
+if USE_BAYAR:
+    MODEL = BayarFusionModel(_SEMANTIC_CKPT, _BAYAR_CKPT, _FUSION_CKPT, DEVICE)
+    MODEL_STATUS = "Using pretrained semantic + Bayar+SRM fusion weights."
+else:
+    MODEL = build_model(checkpoint=None, device=DEVICE)
+    MODEL_STATUS = (
+        "**No pretrained checkpoint found in `checkpoints/` -- running on randomly "
+        "initialized stub weights, predictions are not meaningful.** "
+        "See MODEL_README.md to download the real weights."
+    )
 
 EXAMPLE_IMAGES = [
     "test_sample.jpg",
@@ -61,6 +88,14 @@ def _preprocess(image: Image.Image) -> torch.Tensor:
     return tensor
 
 
+def _preprocess_raw(image: Image.Image) -> torch.Tensor:
+    """Bayar+SRM's input contract: raw [0, 1] pixels at 256x256, unnormalized."""
+    resized = image.convert("RGB").resize((256, 256), Image.BILINEAR)
+    array = np.asarray(resized, dtype=np.float32) / 255.0
+    tensor = torch.from_numpy(array.transpose(2, 0, 1)).unsqueeze(0).float()
+    return tensor
+
+
 def _mock_saliency_overlay(image: Image.Image, prob: float) -> Image.Image:
     """Builds a placeholder saliency heatmap overlay (radial gradient).
 
@@ -87,8 +122,12 @@ def predict(image: Image.Image, threshold: float = 0.5) -> Tuple[str, float, Ima
         raise ValueError("No image provided")
     tensor = _preprocess(image).to(DEVICE)
     with torch.no_grad():
-        output = MODEL(tensor)
-    prob = float(output["prob"].item())
+        if USE_BAYAR:
+            raw = _preprocess_raw(image).to(DEVICE)
+            prob = float(MODEL.predict(tensor, raw).item())
+        else:
+            output = MODEL(tensor)
+            prob = float(output["prob"].item())
     label = "AI-Generated" if prob > threshold else "Authentic"
     overlay = _mock_saliency_overlay(image, prob)
     return label, prob, overlay
@@ -99,6 +138,7 @@ def build_interface():
 
     with gr.Blocks(title="RAID") as demo:
         gr.Markdown("# AI Image Detector\nUpload an image to estimate the probability it is AI-generated.")
+        gr.Markdown(MODEL_STATUS)
         with gr.Row():
             with gr.Column():
                 image_input = gr.Image(type="pil", label="Upload Image", image_mode="RGB")
