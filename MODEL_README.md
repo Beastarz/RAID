@@ -4,11 +4,17 @@ Experimental AI-image detection models trained on the SID_Set dataset.
 
 ## Model files
 
+The `RAID-techjam/raid-detector-fusion` repo currently publishes:
+
 - `semantic_stream.pt`: pretrained ViT-B/16 semantic stream checkpoint.
 - `bayar_srm_stream.pt`: Bayar+SRM low-level forensic stream checkpoint.
-- `bayar_srm_head.pt`: standalone Bayar+SRM classifier head for low-level evaluation.
 - `detector_fusion.pt`: fusion/classifier checkpoint trained with frozen semantic and Bayar+SRM streams.
 - `base_config.yaml`: training configuration.
+
+Note: `bayar_srm_head.pt` (the standalone Bayar+SRM classifier head used only by
+`training/evaluate_bayar_srm.py`'s standalone stress test, not by fused
+inference) is **not** included in this repo. Run `training/train_bayar_srm.py`
+yourself if you need that file.
 
 The stream checkpoints and fusion checkpoint must be used with the matching source
 code from the RAID repository. These are experimental weights, not a production
@@ -102,12 +108,13 @@ The command prints a JSON result containing the AI probability, label, and
 inference time. The `--bayar` flag is required because this checkpoint uses
 the Bayar+SRM low-level stream rather than the older FFT stream.
 
-## Important limitation
+## Important note
 
-The current `predict.py` entry point still targets the original semantic plus
-frequency-stream `DetectorPipeline`. The Bayar-aware fusion checkpoint is not
-yet wired into that CLI. Use the training/evaluation scripts above until a
-Bayar-aware inference wrapper is added.
+`predict.py` defaults to the original semantic plus frequency-stream
+`DetectorPipeline`, which still runs on stub weights. Pass `--bayar` (as shown
+above) to route through the Bayar-aware fusion checkpoint instead — that flag
+and its `--semantic-checkpoint`/`--bayar-checkpoint` options are wired in and
+smoke-tested against the published weights.
 
 ## Reported experiment
 
