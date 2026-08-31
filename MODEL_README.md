@@ -77,6 +77,31 @@ python -m training.train_fusion `
 
 The resulting checkpoint is written to `checkpoints/detector_fusion.pt`.
 
+## Run fused inference
+
+Pull the latest RAID source code and place the three required checkpoints in
+the local `checkpoints` directory:
+
+```powershell
+git pull origin main
+hf download RAID-techjam/raid-detector-fusion --repo-type model --local-dir checkpoints
+```
+
+Run prediction on an image:
+
+```powershell
+python predict.py `
+  --image test_sample.jpg `
+  --bayar `
+  --checkpoint checkpoints/detector_fusion.pt `
+  --semantic-checkpoint checkpoints/semantic_stream.pt `
+  --bayar-checkpoint checkpoints/bayar_srm_stream.pt
+```
+
+The command prints a JSON result containing the AI probability, label, and
+inference time. The `--bayar` flag is required because this checkpoint uses
+the Bayar+SRM low-level stream rather than the older FFT stream.
+
 ## Important limitation
 
 The current `predict.py` entry point still targets the original semantic plus
