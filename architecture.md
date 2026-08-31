@@ -81,46 +81,47 @@ share one data pipeline: NPR's residual signal is destroyed by resizing, so
 it can't go through the same resize-to-512 + ImageNet-normalize step the
 semantic stream needs. Each stream therefore owns its own dataset class.
 
-```
-configs/base_config.yaml, configs/augmentations.yaml
-              │
-       ┌──────┴──────────────────────────────┐
-       ▼                                      ▼
-training/data/dataset.py                training/train_npr.py's own
-(AIGCDataset: manifest CSV                NPRCropDataset (same manifest
-or synthetic -> [3, 512, 512],            CSV, but: random native-resolution
-resized + ImageNet-normalized)            crop, raw [0,1], never resized)
-       │                                      │
-       ▼                                      │
-training/data/datamodule.py                   │
-(DataLoader: batching,                        │
- contiguous train/val split)                  │
-       │                                      ▼
-       ▼                              (random, seeded train/val split --
-training/data/augmentations.py         not contiguous, see train_npr.py)
-(RobustnessTransforms, applied                │
- before ToTensorV2())                         │
-       │                                      │
-       ▼                                      ▼
- src/models/                           src/models/
- semantic_stream                       npr_stream (NPRStream)
-       │                                      │
-       ▼                                      ▼
- training/                             training/train_npr.py
- train_semantic.py                     (+ linear head, AdamW + cosine LR,
- (+ linear head, loss,                  pos_weight BCE, per-epoch val
- optimizer -- mock,                     loss/accuracy/AUC -- a REAL
- fixed step count)                      multi-epoch loop, not mock)
-       │                                      │
-       ▼                                      ▼
- checkpoints/                          checkpoints/npr_stream.pt (backbone)
- semantic_stream.pt                    + checkpoints/npr_head.pt (head),
-                                        saved only when val AUC improves
-                                               │
-                                               ▼
-                                        training/test_npr.py (re-derives the
-                                        same val split, reports held-out
-                                        loss/accuracy/AUC)
+```mermaid
+flowchart TD
+    CFG["configs/base_config.yaml<br/>configs/augmentations.yaml"]
+
+    subgraph SEM["Semantic Stream Path"]
+        direction TB
+        SD["training/data/dataset.py<br/><b>AIGCDataset</b>: manifest CSV or synthetic<br/>→ [3, 512, 512], resized + ImageNet-normalized"]
+        SDM["training/data/datamodule.py<br/>DataLoader: batching, contiguous train/val split"]
+        SAUG["training/data/augmentations.py<br/><b>RobustnessTransforms</b>, applied before ToTensorV2()"]
+        SMOD["src/models/semantic_stream.py"]
+        STR["training/train_semantic.py<br/>+ linear head, loss, optimizer — mock,<br/>fixed step count"]
+        SCKPT["checkpoints/semantic_stream.pt"]
+        SD --> SDM --> SAUG --> SMOD --> STR --> SCKPT
+    end
+
+    subgraph NPR["NPR Stream Path"]
+        direction TB
+        ND["training/train_npr.py's own <b>NPRCropDataset</b><br/>(same manifest CSV, but: random native-resolution<br/>crop, raw [0,1], never resized)"]
+        NSPLIT["random, seeded train/val split —<br/>not contiguous (see train_npr.py)"]
+        NMOD["src/models/npr_stream.py (NPRStream)"]
+        NTR["training/train_npr.py<br/>+ linear head, AdamW + cosine LR, pos_weight BCE,<br/>per-epoch val loss/accuracy/AUC — a REAL<br/>multi-epoch loop, not mock"]
+        NCKPT["checkpoints/npr_stream.pt (backbone)<br/>+ checkpoints/npr_head.pt (head),<br/>saved only when val AUC improves"]
+        NTEST["training/test_npr.py<br/>re-derives the same val split, reports<br/>held-out loss/accuracy/AUC"]
+        ND --> NSPLIT --> NMOD --> NTR --> NCKPT --> NTEST
+    end
+
+    CFG --> SD
+    CFG --> ND
+
+    classDef cfg fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef sem fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef npr fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+    classDef ckpt fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
+
+    class CFG cfg;
+    class SD,SDM,SAUG,SMOD,STR sem;
+    class ND,NSPLIT,NMOD,NTR,NTEST npr;
+    class SCKPT,NCKPT ckpt;
+
+    style SEM fill:#eff6ff,stroke:#60a5fa,stroke-width:1px,color:#1e3a5f
+    style NPR fill:#fdf4ff,stroke:#e879f9,stroke-width:1px,color:#4a044e
 ```
 
 Real data for either path comes from `training/data/import_hf.py` (streams a
@@ -144,23 +145,29 @@ all run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
 
 ### Inference Pipeline (online, consumes a checkpoint)
 
-```
-Image file / directory (--image)
-              │
-              ▼
-   predict.py::load_image_tensor (resize 512x512, ImageNet normalize -> [1, 3, 512, 512])
-              │
-              ▼
-   src/models/detector.py (DetectorPipeline, weights loaded from --checkpoint if given)
-              │
-              ▼
-   {"logit", "prob", "features"} dict
-              │
-              ▼
-   predict.py -> JSON line per image (CLI)     app.py -> Gradio UI (label, probability, heatmap)
-                                                      │
-                                                      ▼
-                                        src/explainability/visualizer.py (saliency overlay)
+```mermaid
+flowchart TD
+    IMG["Image file / directory (--image)"]
+    LOAD["predict.py::load_image_tensor<br/>resize 512x512, ImageNet normalize<br/>→ [1, 3, 512, 512]"]
+    DET["src/models/detector.py<br/><b>DetectorPipeline</b><br/>(weights loaded from --checkpoint if given)"]
+    OUT["{'logit', 'prob', 'features'} dict"]
+    CLI["predict.py → JSON line per image (CLI)"]
+    GUI["app.py → Gradio UI<br/>(label, probability, heatmap)"]
+    VIZ["src/explainability/visualizer.py<br/>(saliency overlay)"]
+
+    IMG --> LOAD --> DET --> OUT
+    OUT --> CLI
+    OUT --> GUI --> VIZ
+
+    classDef pre fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef core fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
+    classDef cli fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef gui fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+
+    class IMG,LOAD pre;
+    class DET,OUT core;
+    class CLI cli;
+    class GUI,VIZ gui;
 ```
 
 Entry points: `python predict.py --image <path> [--checkpoint <ckpt>]` and
