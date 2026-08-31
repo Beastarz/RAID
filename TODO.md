@@ -159,20 +159,21 @@ training entry points until the integration phases.
 
 ### Phase 1: Metrics and report schemas
 
-- [ ] Implement model-independent ROC-AUC, average precision, explicitly named
+- [x] Implement model-independent ROC-AUC, average precision, explicitly named
       trapezoidal PR-AUC, confusion counts, accuracy, precision, recall,
       specificity, F1, Brier score, binary log loss, ECE, and reliability bins.
-- [ ] Add bootstrap confidence intervals for dataset-level metrics.
-- [ ] Accept arrays or prediction records rather than a model, and use a
+- [x] Add bootstrap confidence intervals for dataset-level metrics.
+- [x] Accept arrays or prediction records rather than a model, and use a
       caller-supplied fixed decision threshold.
-- [ ] Return `None` for undefined metrics instead of non-standard JSON `NaN`.
-- [ ] Include class counts, sample counts, threshold, and schema version in
+- [x] Return `None` for undefined metrics instead of non-standard JSON `NaN`.
+- [x] Include class counts, sample counts, threshold, and schema version in
       serialized reports.
-- [ ] Keep metric calculation separate from plotting.
-- [ ] Add correctness tests using fixed labels and scores with independently
+- [x] Keep metric calculation separate from plotting.
+- [x] Add correctness tests using fixed labels and scores with independently
       verified expected values.
-- [ ] Acceptance: prediction JSONL can produce a complete JSON-serializable
-      report without importing or loading a PyTorch model.
+- [x] Acceptance: validated prediction records can produce a complete
+      JSON-serializable report without importing or loading a PyTorch model;
+      JSONL parsing/file orchestration remains Phase 7 work.
 
 Suggested files: `training/evaluation/metrics.py`,
 `training/evaluation/calibration.py`, `training/evaluation/schemas.py`,
@@ -197,16 +198,16 @@ Suggested files: `training/evaluation/robustness_suite.py` and
 
 ### Phase 3: Rendering and artifact management
 
-- [ ] Implement heatmap resizing, percentile normalization, color-map overlays,
+- [x] Implement heatmap resizing, percentile normalization, color-map overlays,
       signed diverging residual views, absolute residual magnitude views, and
       side-by-side panels from arrays/tensors rather than model objects.
-- [ ] Save visual outputs as PNG and optionally preserve lossless map data as
+- [x] Save visual outputs as PNG and optionally preserve lossless map data as
       NumPy files.
-- [ ] Record artifact paths and raw statistics before display normalization so
+- [x] Record artifact paths and raw statistics before display normalization so
       weak NPR residuals are not made to look artificially strong.
-- [ ] Make rendering deterministic and keep visualization separate from
+- [x] Make rendering deterministic and keep visualization separate from
       attribution generation.
-- [ ] Acceptance: fixed arrays produce deterministic dimensions, finite values,
+- [x] Acceptance: fixed arrays produce deterministic dimensions, finite values,
       valid image ranges, and serializable artifact metadata.
 
 Suggested files: `src/explainability/rendering.py`,
@@ -368,15 +369,38 @@ Wave 0 accepted handoff:
 
 #### Wave 1: Independent foundations (parallel where isolated)
 
-- [ ] Assign one worker to Phase 1 metrics/calibration.
-- [ ] Assign one worker to Phase 3 rendering/artifact management.
-- [ ] Give workers disjoint implementation and test files, preferably in
+- [x] Assign one worker to Phase 1 metrics/calibration.
+- [x] Assign one worker to Phase 3 rendering/artifact management.
+- [x] Give workers disjoint implementation and test files, preferably in
       isolated branches/worktrees.
-- [ ] Parent review gate: run each focused test set, inspect both public APIs,
+- [x] Parent review gate: run each focused test set, inspect both public APIs,
       then run the full suite after integration.
+
+Wave 1 accepted handoff:
+
+- Evaluation accepts validated arrays or `PredictionRecord` sequences and
+  produces strict-JSON discrimination, threshold, calibration, reliability-bin,
+  and deterministic percentile-bootstrap results without importing a model.
+- Undefined metrics are represented as `None`; public schemas reject invalid
+  ranges, inconsistent confusion counts, malformed bins, and invalid confidence
+  intervals.
+- Rendering accepts NumPy and tensor-like values without importing PyTorch,
+  preserves raw scale statistics, requires explicit coordinate-space labels,
+  and prevents frequency-plane maps from being silently overlaid on images.
+- Artifact storage writes PNG and optional lossless NPY outputs, rejects unsafe
+  paths/IDs, and keeps generated provenance authoritative over caller metadata.
+- Verification: 110 combined Wave 0/1 tests pass, Python compilation and
+  `git diff --check` pass. The full pre-existing suite was attempted but cannot
+  collect in the available pytest environment because `torch` and
+  `albumentations` are not installed there.
 
 #### Wave 2: Independent algorithms (parallel where isolated)
 
+- [ ] Before assigning architecture-facing algorithms, amend the adapter
+      capabilities to expose generic named branch targets/intermediate
+      representations. The active detector now uses an FFT high-pass ConvNeXt
+      branch, while NPR remains a possible replacement/additional branch, so
+      Wave 0's NPR-specific methods are too narrow for final integration.
 - [ ] Assign separate workers to robustness aggregation, generic Grad-CAM,
       Integrated Gradients, attention rollout, and branch Shapley contributions.
 - [ ] Do not let algorithm workers edit shared facades such as `visualizer.py`;
