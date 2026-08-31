@@ -141,7 +141,7 @@ def build_interface():
         gr.Markdown(MODEL_STATUS)
         with gr.Row():
             with gr.Column():
-                image_input = gr.Image(type="pil", label="Upload Image", image_mode="RGB")
+                image_input = gr.Image(type="pil", label="Upload Image", image_mode="RGB", height=400)
                 threshold_slider = gr.Slider(
                     minimum=0, maximum=100, value=50, step=1,
                     label="Decision Threshold (% AI-Generated)",
@@ -150,7 +150,7 @@ def build_interface():
                 gr.Examples(examples=EXAMPLE_IMAGES, inputs=[image_input], label="Example Images")
             with gr.Column():
                 label_output = gr.Label(num_top_classes=1, label="Prediction", elem_id="label_output")
-                heatmap_output = gr.Image(label="Saliency Map (placeholder)")
+                heatmap_output = gr.Image(label="Saliency Map (placeholder)", height=400)
 
         def _run(image: Image.Image, threshold_pct: float):
             yield gr.update(), gr.update(interactive=False), gr.update()
