@@ -17,7 +17,8 @@ ai-image-detector/
 │ │ ├── **init**.py
 │ │ ├── base_stream.py # Abstract class for extraction streams
 │ │ ├── semantic_stream.py # Stream 1: High-level semantic backbone wrapper
-│ │ ├── frequency_stream.py # Stream 2: Mid-level/frequency domain backbone
+│ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (replaces frequency_stream.py)
+│ │ ├── frequency_stream.py # SUPERSEDED by npr_stream.py; kept on disk, no longer part of the active architecture
 │ │ ├── fusion.py # Cross-stream feature fusion layer
 │ │ └── detector.py # End-to-end PyTorch Lightning / PyTorch Module
 │ └── explainability/ # Team Member D: Diagnostic Tools (used by predict.py / app.py)
@@ -26,13 +27,16 @@ ai-image-detector/
 ├── training/ # Training pipeline — everything only the offline pipeline needs
 │ ├── **init**.py
 │ ├── train_semantic.py # Trains the semantic stream in isolation, saves a checkpoint
-│ ├── train_frequency.py # Trains the frequency stream in isolation, saves a checkpoint
+│ ├── train_npr.py # Trains the NPR stream in isolation: real multi-epoch loop, own crop dataset
+│ ├── test_npr.py # Evaluates a trained NPR checkpoint on its held-out val split
 │ ├── evaluate.py # Main evaluation CLI against benchmark transforms
 │ ├── data/ # Team Member A: Data & Augmentations
 │ │ ├── **init**.py
 │ │ ├── dataset.py # Custom Dataset class loading Real/AI images
 │ │ ├── augmentations.py # Robustness transform pipeline (Albumentations)
-│ │ └── datamodule.py # PyTorch DataLoader wrapper
+│ │ ├── datamodule.py # PyTorch DataLoader wrapper
+│ │ ├── import_hf.py # Streams a real HF image dataset into a local manifest CSV
+│ │ └── shuffle_manifest.py # Shuffles a manifest's rows before training reads it
 │ └── evaluation/ # Team Member C: Benchmark & Metrics
 │ ├── **init**.py
 │ ├── robustness_suite.py # Automated robustness test runner across transforms
@@ -60,49 +64,74 @@ versa.
 
 The two feature-extraction streams are trained **independently** (their own
 script, their own checkpoint) so two teammates can research each backbone in
-parallel without touching the same file. Both scripts share the same data +
-augmentation path; neither touches `fusion.py` -- joint fine-tuning of the
-fused `DetectorPipeline` is future work (`TODO.md` §3).
+parallel without touching the same file. Neither touches `fusion.py` -- joint
+fine-tuning of the fused `DetectorPipeline` is future work (`TODO.md` §3).
+
+Unlike the original two-stream design, the semantic and NPR paths do **not**
+share one data pipeline: NPR's residual signal is destroyed by resizing, so
+it can't go through the same resize-to-512 + ImageNet-normalize step the
+semantic stream needs. Each stream therefore owns its own dataset class.
 
 ```
 configs/base_config.yaml, configs/augmentations.yaml
               │
-              ▼
-   training/data/dataset.py (AIGCDataset: manifest CSV or synthetic -> [3, H, W])
-              │
-              ▼
-   training/data/datamodule.py (DataLoader: batching, train/val split)
-              │
-              ▼
-   training/data/augmentations.py (RobustnessTransforms, applied before ToTensorV2())
-              │
-        ┌─────┴─────┐
-        ▼           ▼
- src/models/     src/models/
- semantic_stream frequency_stream
-        │           │
-        ▼           ▼
- training/       training/
- train_semantic  train_frequency
- .py (+ linear   .py (+ linear
- head, loss,     head, loss,
- optimizer)      optimizer)
-        │           │
-        ▼           ▼
- checkpoints/    checkpoints/
- semantic_       frequency_
- stream.pt       stream.pt
+       ┌──────┴──────────────────────────────┐
+       ▼                                      ▼
+training/data/dataset.py                training/train_npr.py's own
+(AIGCDataset: manifest CSV                NPRCropDataset (same manifest
+or synthetic -> [3, 512, 512],            CSV, but: random native-resolution
+resized + ImageNet-normalized)            crop, raw [0,1], never resized)
+       │                                      │
+       ▼                                      │
+training/data/datamodule.py                   │
+(DataLoader: batching,                        │
+ contiguous train/val split)                  │
+       │                                      ▼
+       ▼                              (random, seeded train/val split --
+training/data/augmentations.py         not contiguous, see train_npr.py)
+(RobustnessTransforms, applied                │
+ before ToTensorV2())                         │
+       │                                      │
+       ▼                                      ▼
+ src/models/                           src/models/
+ semantic_stream                       npr_stream (NPRStream)
+       │                                      │
+       ▼                                      ▼
+ training/                             training/train_npr.py
+ train_semantic.py                     (+ linear head, AdamW + cosine LR,
+ (+ linear head, loss,                  pos_weight BCE, per-epoch val
+ optimizer -- mock,                     loss/accuracy/AUC -- a REAL
+ fixed step count)                      multi-epoch loop, not mock)
+       │                                      │
+       ▼                                      ▼
+ checkpoints/                          checkpoints/npr_stream.pt (backbone)
+ semantic_stream.pt                    + checkpoints/npr_head.pt (head),
+                                        saved only when val AUC improves
+                                               │
+                                               ▼
+                                        training/test_npr.py (re-derives the
+                                        same val split, reports held-out
+                                        loss/accuracy/AUC)
 ```
+
+Real data for either path comes from `training/data/import_hf.py` (streams a
+Hugging Face dataset into a local `image_path,label` manifest CSV) piped
+through `training/data/shuffle_manifest.py`, then pointed to by
+`configs/base_config.yaml`'s `data.manifest_path` -- both dataset classes
+fall back to an in-memory synthetic dataset if that path doesn't exist yet.
 
 `training/evaluate.py` currently benchmarks the full (randomly-initialized,
 unless `--checkpoint` is given) fused `DetectorPipeline` directly -- it does
-not yet load the per-stream checkpoints above into it; wiring that up is
+not yet load the per-stream checkpoints above into it, and note that a raw
+`NPRStream` checkpoint's keys won't match `DetectorPipeline`'s
+`frequency_stream.*`-prefixed keys without remapping; wiring that up is
 tracked in `TODO.md` §3/§4.
 
 Entry points: `python -m training.train_semantic --config configs/base_config.yaml`,
-`python -m training.train_frequency --config configs/base_config.yaml`, and
+`python -m training.train_npr --config configs/base_config.yaml`,
+`python -m training.test_npr --config configs/base_config.yaml`, and
 `python -m training.evaluate --checkpoint <ckpt> --config configs/augmentations.yaml`,
-both run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
+all run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
 
 ### Inference Pipeline (online, consumes a checkpoint)
 
@@ -142,10 +171,16 @@ To ensure all components seamlessly connect, teammates must strictly follow thes
 | **Data Ingestion**      | Raw image path (`str`)       | Tensor `[B, 3, H, W]`                | `ImageDataset.__getitem__()`    |
 | **Augmentation**        | Clean Tensor `[B, 3, H, W]`  | Transformed Tensor `[B, 3, H, W]`    | `AugmentationEngine.apply()`    |
 | **Stream 1 Extraction** | Tensor `[B, 3, H, W]`        | Feature Tensor `[B, D1]`             | `SemanticStream.forward()`      |
-| **Stream 2 Extraction** | Tensor `[B, 3, H, W]`        | Feature Tensor `[B, D2]`             | `FrequencyStream.forward()`     |
+| **Stream 2 Extraction** | Tensor `[B, 3, H, W]`, raw `[0,1]` native crop (NOT resized/normalized -- see below) | Feature Tensor `[B, D2]` | `NPRStream.forward()`     |
 | **Fusion Layer**        | Tensors `([B, D1], [B, D2])` | Unified Vector `[B, D_fused]`        | `FusionModule.forward()`        |
 | **Classification**      | Vector `[B, D_fused]`        | Logit `[B, 1]` / Prob `[0.0 to 1.0]` | `ClassificationHead.forward()`  |
 | **Explainability**      | Image Tensor + Model         | Spatial Saliency Matrix `[H, W]`     | `Visualizer.generate_heatmap()` |
+
+Note Stream 2's input diverges from every other row's `[B, 3, H, W]` shorthand:
+NPR's residual is destroyed by resizing, so it must receive a raw, un-normalized,
+native-resolution crop rather than the resized + ImageNet-normalized tensor the
+other rows assume. `D2` is 256 by default (`resnet_shallow` backbone) or 768 with
+the `convnext_tiny` ablation -- read `NPRStream.output_dim` rather than hardcoding.
 
 ---
 
@@ -171,10 +206,11 @@ Key classes to implement:
 - _Purpose_: Extracts deep semantic and contextual representations resilient to surface noise and downsampling.
 - _Wrapper Contract_: Accepts `[B, 3, H, W]`, outputs a high-level representation vector `[B, D1]`. Any suitable vision foundation backbone can be plugged into this class without changing downstream code.
 
-3. **Stream 2: Mid-Level / Frequency Stream (`frequency_stream.py`)**:
+3. **Stream 2: Low-Level Forensic / NPR Stream (`npr_stream.py`, replaces `frequency_stream.py`)**:
 
-- _Purpose_: Processes mid-frequency spectral features or texture residuals that survive spatial compression.
-- _Wrapper Contract_: Converts spatial tensors `[B, 3, H, W]` to frequency representations (e.g., using 2D Fast Fourier Transforms or High-Pass Filters) before passing them to a lightweight backbone to output `[B, D2]`.
+- _Purpose_: Reads the Neighboring Pixel Relationships (NPR) residual -- a fixed, parameter-free nearest-neighbour downsample-upsample round trip subtracted from the input -- which isolates the periodic local-correlation pattern every GAN/diffusion decoder's final upsampling stack leaves behind. Reference: Tan et al., CVPR 2024.
+- _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`) -- the frontend swap point specifically exists so a future Bayar constrained-conv + SRM-filter frontend can replace `NPR` behind the identical interface if a resize-robustness stress test shows the fixed operator doesn't hold up.
+- The earlier FFT-magnitude + pool/linear stub (`frequency_stream.py`) remains in the tree but is superseded and no longer part of the active architecture.
 
 ### C. Fusion & Classification Head (`src/models/fusion.py` & `detector.py`)
 
@@ -217,7 +253,7 @@ To maximize team efficiency during a hackathon, team members can work simultaneo
 | Team Member  | Module Focus                    | Primary Deliverables                                                    | Independence Strategy (Mocking)                                                                                                               |
 | ------------ | ------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Member A** | **Data & Augmentations**        | `dataset.py`, `augmentations.py`, transform parameters configuration    | Can build data loaders and test transformations on dummy images independently of model development.                                           |
-| **Member B** | **Model & Fusion Architecture** | `semantic_stream.py`, `frequency_stream.py`, `fusion.py`, `detector.py` | Can build backbone wrappers using lightweight stub networks (e.g., simple CNNs) to verify tensor shapes before dropping in pretrained models. |
+| **Member B** | **Model & Fusion Architecture** | `semantic_stream.py`, `npr_stream.py`, `fusion.py`, `detector.py` | Can build backbone wrappers using lightweight stub networks (e.g., simple CNNs) to verify tensor shapes before dropping in pretrained models. |
 | **Member C** | **Evaluation & Robustness**     | `robustness_suite.py`, `metrics.py`, `training/evaluate.py`             | Can write the evaluation benchmark runner using a dummy model that outputs random logits to ensure metric calculation works.                  |
 | **Member D** | **Explainability & Scripts**    | `visualizer.py`, `predict.py`, CLI interface, documentation             | Can develop visualization scripts using random gradient tensors or mock spatial attention maps.                                               |
 
@@ -225,7 +261,7 @@ To maximize team efficiency during a hackathon, team members can work simultaneo
 
 ## 6. Execution Strategy
 
-1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `training/train_semantic.py` and `training/train_frequency.py` run using dummy input tensors and basic placeholder backbones.
+1. **Step 1: Set Up Interfaces**: Clone repository, build virtual environment, and verify that `training/train_semantic.py` and `training/train_npr.py` run using dummy input tensors and basic placeholder backbones.
 2. **Step 2: Component Implementation**: Team members complete their respective modules using the agreed-upon data contracts.
 3. **Step 3: Integration**: Replace stub models with actual pretrained extraction backbones and connect real datasets to the robust augmentation pipeline.
 4. **Step 4: Benchmarking**: Run `training/evaluate.py` to test performance under JPEG compression, blur, downscaling, noise, jitter, and cropping, generating final metrics and visual heatmaps.

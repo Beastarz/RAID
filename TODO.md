@@ -9,7 +9,12 @@ follow.
 
 - [x] `src/models/base_stream.py` — `BaseFeatureStream` abstract interface
 - [x] `src/models/semantic_stream.py` — stub, `[B, 3, H, W] -> [B, 1024]`
-- [x] `src/models/frequency_stream.py` — stub (real FFT magnitude), `[B, 3, H, W] -> [B, 768]`
+- [x] `src/models/npr_stream.py` — `NPRStream`, replaces the `frequency_stream.py`
+      stub (kept on disk, superseded). Real NPR residual operator + swappable
+      backbone (`resnet_shallow`/`convnext_tiny`) + swappable frontend (for a
+      future Bayar+SRM fallback), `[B, 3, H, W] (raw [0,1], native crop) ->
+      [B, 256 or 768]`. Has an actual trained checkpoint (see below), not just a
+      stub.
 - [x] `src/models/fusion.py` — `FeatureFusion` stub, `-> [B, 512]`
 - [x] `src/models/detector.py` — `DetectorPipeline`, returns `{logit, prob, features}`
 - [x] `predict.py` — single-image / directory CLI inference, JSON output
@@ -32,12 +37,30 @@ follow.
 - [x] `tests/test_data.py` — minimal critical-path tests: augmentation output
       shape contract, dataset label/shape contract, and a smoke test per
       stream-training script (`train_semantic.py`/`train_frequency.py`,
-      including checkpoint-file creation).
+      including checkpoint-file creation). Predates `train_npr.py` and doesn't
+      cover it yet -- see §1 below. Still covers the now-superseded
+      `train_frequency.py`; that coverage can move to `train_npr.py` once
+      `frequency_stream.py`/`train_frequency.py` are removed for good.
+- [x] `training/data/import_hf.py` — streams a real Hugging Face dataset
+      (`RAID-techjam/SID_Set`) into a local `image_path,label` manifest CSV,
+      collapsing its 3-way label to the project's binary contract.
+- [x] `training/data/shuffle_manifest.py` — shuffles a manifest's rows (seeded)
+      so `AIGCDataModule`'s contiguous train/val split isn't class-skewed.
+- [x] `training/train_npr.py` — real (not mock) short training loop for the NPR
+      stream: train/val split, AdamW + cosine LR, pos_weight-balanced BCE,
+      per-epoch val loss/accuracy/AUC, checkpoints only on best val AUC. Trained
+      once already on a partial real SID_Set pull (~3.4K samples): val AUC
+      reached ~0.91 after 3 epochs.
+- [x] `training/test_npr.py` — evaluates a trained NPR checkpoint on its
+      held-out val split.
 
 ## 1. Data & Augmentations (`training/data/`) — remaining
 
-- [ ] Source or assemble the real/AI-generated image dataset and build the
-      manifest CSV (currently only exercised via the synthetic fallback).
+- [ ] `import_hf.py` only exports a `--limit`-sized sample count, not a byte
+      budget -- pull the full ~32GB/~137K-sample target (or more) once ready,
+      and re-run `train_npr.py`/`test_npr.py` against it.
+- [ ] `tests/test_data.py` doesn't cover `train_npr.py` or the new
+      `import_hf.py`/`shuffle_manifest.py` scripts -- add coverage.
 - [ ] Broaden `tests/test_data.py` beyond the minimal critical-path set (e.g.
       manifest-CSV loading, eval-mode isolation, severity bounds) once useful.
 
@@ -46,11 +69,15 @@ follow.
 - [ ] `semantic_stream.py` — replace the pool+linear stub with a DINOv2 / ViT
       backbone (frozen or fine-tuned), keeping the `[B, 3, H, W] -> [B, 1024]`
       contract.
-- [ ] `frequency_stream.py` — replace the FFT-magnitude stub with real FFT
-      high-pass masking feeding a lightweight ConvNeXt-Tiny backbone, keeping the
-      `[B, 3, H, W] -> [B, 768]` contract.
+- [ ] `npr_stream.py` — run the M3 resize/downscale stress test (go/no-go, see
+      npr_stream_guide.md §7): does val AUC hold up (within ~0.05) when images
+      go through a downscale-then-upscale round trip before the crop? If it
+      collapses toward 0.5, swap the frontend to Bayar constrained-conv + SRM
+      filters via the already-built `frontend=` injection point -- no other
+      code changes needed.
 - [ ] `fusion.py` — upgrade concat+linear to cross-attention fusion, keeping the
-      `-> [B, 512]` contract.
+      `-> [B, 512]` contract; note its `freq_dim` default (768) needs
+      `freq_dim=256` (or `NPRStream.output_dim`) to match NPR's default backbone.
 - [ ] Populate `configs/model_config.yaml` (currently empty) with backbone and
       fusion hyperparameters.
 - [ ] Verify total parameter count stays under the 2B budget (target ~337M) once
@@ -58,24 +85,35 @@ follow.
 - [ ] `tests/test_models.py` — shape/contract tests for each stream, fusion, and
       `DetectorPipeline`, including a frozen-weights determinism test.
 
-## 3. Training (`training/train_semantic.py`, `training/train_frequency.py`)
+## 3. Training (`training/train_semantic.py`, `training/train_npr.py`)
 
 Each stream trains independently (own script, own checkpoint, no shared file)
 so two teammates can research a stream each in parallel; neither touches
-`fusion.py` yet.
+`fusion.py` yet. The two scripts are no longer at the same maturity level --
+NPR has a real multi-epoch loop already; semantic is still the mock wiring
+test.
 
 - [x] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`, plus
       a mock loop (real forward/BCE-loss/backward/optimizer.step over a few
-      `--steps`) that proves the data flow end-to-end, for each stream.
-- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt`,
-      `checkpoints/frequency_stream.pt`) — currently mock weights, not yet
-      meaningful.
-- [ ] Implement the full (PyTorch Lightning or plain) per-stream training
-      loop: LR schedule, multi-epoch training, real loss curves.
+      `--steps`) that proves the data flow end-to-end, for `train_semantic.py`.
+- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt` — mock
+      weights, not yet meaningful).
+- [x] `train_npr.py` — full real per-stream training loop: AdamW + cosine LR
+      schedule, multi-epoch (5 by default), train/val split, real val
+      loss/accuracy/AUC curves, checkpointing on best val AUC
+      (`checkpoints/npr_stream.pt` + `checkpoints/npr_head.pt`).
+- [ ] Give `train_semantic.py` the same real-training upgrade `train_npr.py`
+      already got (epochs, val split, metrics, best-checkpoint saving) once a
+      real semantic backbone lands.
 - [ ] Once both streams are validated individually: joint fine-tuning of the
       fused `DetectorPipeline` (`fusion.py` + both streams together), and
       wiring `training/evaluate.py` to load the two per-stream checkpoints
-      into it instead of running a fresh random-init model.
+      into it instead of running a fresh random-init model. Note this needs a
+      key-remapping step for NPR's checkpoint (`NPRStream`'s flat state dict
+      vs. `DetectorPipeline`'s `frequency_stream.*`-prefixed keys) and a
+      resolution for the input-contract mismatch (NPR wants a raw native crop,
+      semantic wants a resized/normalized tensor) -- `DetectorPipeline.forward`
+      currently feeds one shared tensor to both streams.
 
 ## 4. Robustness Evaluation (`training/evaluation/`, `training/evaluate.py`)
 
@@ -91,8 +129,8 @@ so two teammates can research a stream each in parallel; neither touches
 
 ## 5. Explainability (`src/explainability/`)
 
-- [ ] `visualizer.py` — real `AttributionVisualizer` (Grad-CAM for the frequency
-      stream / ConvNeXt, attention-rollout for the semantic ViT), producing an
+- [ ] `visualizer.py` — real `AttributionVisualizer` (Grad-CAM for the NPR
+      stream's backbone, attention-rollout for the semantic ViT), producing an
       `[H, W]` saliency map.
 - [ ] Swap `app.py`'s `_mock_saliency_overlay` placeholder for the real
       visualizer output.
@@ -101,9 +139,14 @@ so two teammates can research a stream each in parallel; neither touches
 ## 6. Integration & Polish
 
 - [ ] End-to-end run: real dataset -> `training/train_semantic.py` +
-      `training/train_frequency.py` -> per-stream checkpoints -> joint
+      `training/train_npr.py` -> per-stream checkpoints -> joint
       fine-tuning -> `training/evaluate.py` robustness report ->
       `predict.py --checkpoint ...` -> `app.py`.
+- [ ] Decide the fate of `src/models/frequency_stream.py` and
+      `training/train_frequency.py` now that `npr_stream.py`/`train_npr.py`
+      supersede them -- either delete both (and their `tests/test_data.py`
+      smoke-test coverage) or explicitly keep the FFT stream as a third,
+      optional stream rather than a replacement.
 - [ ] Load a real checkpoint into `app.py` (currently always runs stub/random
       weights).
 - [ ] Restrict `app.py` image upload to `.jpg`/`.png`/`.webp` at the component

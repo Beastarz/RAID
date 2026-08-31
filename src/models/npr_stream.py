@@ -30,6 +30,13 @@ stream via its existing constructor injection, e.g.:
         fusion=FeatureFusion(freq_dim=OUTPUT_DIM_RESNET_SHALLOW),
     )
 
+The backbone is swappable via the `backbone` flag, and the forensic frontend
+(the module that turns raw pixels into a residual) is swappable via the
+`frontend` constructor arg -- see NPRStream's docstring. That is the M3
+go/no-go swap point in npr_stream_guide.md SS7/SS10: if NPR's signal
+collapses under a resize/downscale stress test, a Bayar+SRM frontend behind
+the same interface plugs in with no other code changes.
+
 Important divergence from the other two streams: NPR's signal is destroyed
 by resizing (resizing is itself an interpolation and overwrites the
 generator's upsampling signature with the resampler's own), so this stream
@@ -40,7 +47,7 @@ produces that crop is a separate, training-pipeline-owned concern (see
 npr_stream_guide.md SS2.1/SS3) and intentionally isn't touched here.
 """
 
-from typing import Final, Literal
+from typing import Final, Literal, Optional
 
 import torch
 import torch.nn as nn
@@ -98,7 +105,7 @@ def _convnext_tiny_backbone() -> nn.Module:
 
 
 class NPRStream(BaseFeatureStream):
-    """NPR residual -> BatchNorm(3) rescale -> shallow backbone -> global average pool.
+    """Forensic frontend residual -> BatchNorm(3) rescale -> backbone -> global average pool.
 
     Input contract: [B, 3, H, W], pixel values in [0, 1] (NOT
     ImageNet-normalized -- the residual is computed on raw pixels and
@@ -109,11 +116,28 @@ class NPRStream(BaseFeatureStream):
 
     Output: [B, D] pooled feature vector. D=256 for the default
     "resnet_shallow" backbone, D=768 for the "convnext_tiny" ablation.
+
+    The frontend (the module that turns raw pixels into a forensic residual)
+    is injectable via `frontend`, defaulting to the fixed, parameter-free
+    `NPR` operator above. This is the swap point npr_stream_guide.md SS7/SS10
+    calls out for the M3 go/no-go: if NPR's signal collapses under the
+    resize/downscale robustness stress test, the prescribed fix is a Bayar
+    constrained-conv + SRM-filter frontend behind the *same* interface
+    ([B, 3, H, W] in [0, 1] -> [B, 3, H, W]), swapped in with e.g.
+    `NPRStream(frontend=BayarSRMFrontend())` and no other code changes --
+    the guide is explicit that this should be a config change, not a
+    rewrite. `stride` is only used to build the default frontend; a custom
+    frontend is responsible for its own input-shape validation.
     """
 
-    def __init__(self, backbone: BackboneName = "resnet_shallow", stride: int = 2) -> None:
+    def __init__(
+        self,
+        backbone: BackboneName = "resnet_shallow",
+        stride: int = 2,
+        frontend: Optional[nn.Module] = None,
+    ) -> None:
         super().__init__()
-        self.npr = NPR(stride=stride)
+        self.frontend = frontend if frontend is not None else NPR(stride=stride)
         self.rescale = nn.BatchNorm2d(3)
 
         if backbone == "resnet_shallow":
@@ -132,7 +156,7 @@ class NPRStream(BaseFeatureStream):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 4 or x.shape[1] != 3:
             raise ValueError(f"Expected input shape [B, 3, H, W], got {tuple(x.shape)}")
-        residual = self.npr(x)  # [B, 3, H, W]
+        residual = self.frontend(x)  # [B, 3, H, W]
         residual = self.rescale(residual)
         feature_map = self.backbone(residual)  # [B, C, H', W']
         features = self.flatten(self.pool(feature_map))  # [B, output_dim]
