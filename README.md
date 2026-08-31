@@ -57,7 +57,11 @@ in parallel against a stable interface while the remaining heavy models land.
   result per image (`filename`, `ai_probability`, `label`, `execution_time_ms`).
 - `app.py` — Gradio frontend: image upload, Run button, prediction label, a
   P(AI-Generated) percentage slider, and a placeholder saliency heatmap overlay
-  (to be replaced by the real Grad-CAM / attention visualizer).
+  (to be replaced by the real Grad-CAM / attention visualizer). Auto-detects the
+  pretrained semantic + Bayar+SRM fusion checkpoint trio in `checkpoints/` (see
+  [`MODEL_README.md`](MODEL_README.md)) and routes through `BayarFusionModel`
+  when present, falling back to the stub `DetectorPipeline` otherwise; a status
+  line under the title always states which one is active.
 - `training/data/augmentations.py` — `RobustnessTransforms` is a real,
   fully-implemented Albumentations pipeline (JPEG compression, Gaussian blur,
   downscale rescaling, Gaussian noise, color jitter, 80% center crop), with a
@@ -117,9 +121,13 @@ in parallel against a stable interface while the remaining heavy models land.
   DEBUG, for tracing data flow and debugging.
 - `predict.py --bayar` — loads the semantic + Bayar+SRM + fusion checkpoint
   trio above into a `BayarFusionModel` inference wrapper instead of the default
-  `DetectorPipeline`. This is currently the only inference path backed by
+  `DetectorPipeline`; `app.py` does the same automatically when the checkpoints
+  are present. These are currently the only inference paths backed by
   jointly-trained, non-stub weights; see the next paragraph and
   [`MODEL_README.md`](MODEL_README.md).
+- `evaluate_predict.py` — evaluates the `predict.py --bayar` path against a
+  labeled manifest (`image_path,label` CSV), reporting accuracy, a confusion
+  matrix, and AUC via scikit-learn.
 
 **Not yet implemented:** joint fine-tuning of the default semantic+frequency-stream
 `DetectorPipeline` (and loading the per-stream checkpoints into it for evaluation)
@@ -136,11 +144,14 @@ instructions. Smoke-tested in this repo: `predict.py --bayar` with the downloade
 checkpoints gives clean real/AI-generated separation on held-out `SID_Set` samples
 (e.g. 4/5 real samples scored under 0.36 AI-probability, 4/5 AI-generated samples
 scored above 0.99), consistent with the ~0.87 clean AUC reported in
-`MODEL_README.md`. Note the HF repo does **not** currently include
-`bayar_srm_head.pt` (only `semantic_stream.pt`, `bayar_srm_stream.pt`, and
-`detector_fusion.pt`) — that file is only needed to reproduce
-`training/evaluate_bayar_srm.py`'s standalone stress test, not for
-`predict.py --bayar` inference, which doesn't use it.
+`MODEL_README.md`. (`evaluate_predict.py` can compute accuracy/AUC against a
+larger labeled manifest, but note `data/sid_binary_10000/` isn't a confirmed
+holdout from what the published checkpoint was trained on, so treat any number
+from it as optimistic rather than a trustworthy generalization estimate.)
+Note the HF repo does **not** currently include `bayar_srm_head.pt` (only
+`semantic_stream.pt`, `bayar_srm_stream.pt`, and `detector_fusion.pt`) — that
+file is only needed to reproduce `training/evaluate_bayar_srm.py`'s standalone
+stress test, not for `predict.py --bayar` inference, which doesn't use it.
 
 The semantic stream can now be trained meaningfully (real ViT-B/16 backbone +
 real data via `import_hf.py`), but end-to-end predictions through
@@ -291,7 +302,14 @@ python app.py
 
 This starts a local Gradio server (URL printed in the console). Upload a `.jpg`,
 `.png`, or `.webp` image and click **Run** to see the predicted label, the
-P(AI-Generated) percentage, and a placeholder saliency overlay.
+P(AI-Generated) percentage, and a placeholder saliency overlay. A status line
+under the title states whether it found the pretrained checkpoints in
+`checkpoints/` (see step 6b) and is using real weights, or fell back to the
+random stub — verified in this repo: with the checkpoints present, the bundled
+real-photo example correctly predicts "Authentic" and `test_sample.jpg`'s
+AI-probability matches `predict.py --bayar`'s output on the same image within
+a few percentage points (the bundled FAKE example is misclassified -- the
+model isn't 100% accurate).
 
 ### 8. Run the test suite
 
