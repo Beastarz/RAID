@@ -29,7 +29,9 @@ class FrequencyStream(BaseFeatureStream):
         weights = ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
         self.backbone = convnext_tiny(weights=weights)
         backbone_dim = self.backbone.classifier[2].in_features
-        self.backbone.classifier = nn.Identity()
+        # Keep ConvNeXt's normalization and Flatten layers; replace only the
+        # classification projection so forward() returns [B, backbone_dim].
+        self.backbone.classifier[2] = nn.Identity()
         self.proj = nn.Identity() if backbone_dim == output_dim else nn.Linear(backbone_dim, output_dim)
         if freeze_backbone:
             for parameter in self.backbone.parameters():
