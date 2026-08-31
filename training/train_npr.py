@@ -79,9 +79,12 @@ class NPRCropDataset(Dataset):
         crop_size: int = 256,
         num_synthetic_samples: int = 32,
         seed: int = 42,
+        resize_augmentation: bool = False,
     ) -> None:
         self.crop_size = crop_size
         self._rng = np.random.default_rng(seed)
+        self.resize_augmentation = resize_augmentation
+        self.train_indices = set()
         self._samples: List[Tuple[Optional[Path], int]] = []
 
         if manifest_path and Path(manifest_path).exists():
@@ -129,6 +132,11 @@ class NPRCropDataset(Dataset):
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         path, label = self._samples[index]
         image = self._load_native_image(index, path)
+        if self.resize_augmentation and index in self.train_indices:
+            scale = float(self._rng.uniform(0.25, 0.75))
+            h, w = image.shape[:2]
+            small = Image.fromarray(image).resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.BILINEAR)
+            image = np.asarray(small.resize((w, h), Image.BILINEAR), dtype=np.uint8)
         crop = self._random_crop(image)
         tensor = torch.from_numpy(crop.astype(np.float32) / 255.0).permute(2, 0, 1)  # [3, crop, crop] in [0, 1]
         label_tensor = torch.tensor([float(label)], dtype=torch.float32)
@@ -256,6 +264,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         seed=config["seed"],
     )
     train_subset, val_subset = _split_dataset(full_dataset, data_cfg["val_split"], config["seed"])
+    full_dataset.train_indices = set(train_subset.indices)
     run_logger.info("NPR dataset split: %d train / %d val", len(train_subset), len(val_subset))
 
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=config["num_workers"])
