@@ -15,10 +15,10 @@ follow.
       backbone (`resnet_shallow`/`convnext_tiny`) + swappable frontend (for a
       Bayar+SRM candidate), `[B, 3, H, W] (raw [0,1], native crop) ->
       [B, 256 or 768]`. Has an actual trained checkpoint (see below), not just a
-      stub. The Bayar+SRM frontend is now implemented and trained as a
-      separate forensic candidate; active-branch selection remains a
-      robustness gate below.
-- [x] `src/models/fusion.py` — `FeatureFusion` stub, `-> [B, 512]`
+      stub. The published fused detector selects the Bayar+SRM frontend with
+      the shallow ResNet backbone and a 256-dimensional forensic output.
+- [x] `src/models/fusion.py` — trained concat+linear `FeatureFusion`,
+      `-> [B, 512]`
 - [x] `src/models/detector.py` — `DetectorPipeline`, returns `{logit, prob, features}`
 - [x] `predict.py` — single-image / directory CLI inference, JSON output
 - [x] `app.py` — Gradio frontend with placeholder saliency overlay
@@ -53,7 +53,8 @@ follow.
       `unfreeze_last_n_blocks` config, `parameter_counts()` for logging),
       keeping the `[B, 3, H, W] -> [B, 1024]` contract.
 - [x] Populate `configs/model_config.yaml` with baseline semantic and fusion
-      hyperparameters; the selected forensic configuration remains pending.
+      hyperparameters; recording the now-selected Bayar+SRM forensic
+      configuration remains pending.
 - [x] `training/train_semantic.py` — real multi-epoch (`--epochs`) training
       loop with a post-epoch validation pass (loss + accuracy), reading the new
       `semantic` config block; capped by `--steps` total optimizer steps.
@@ -81,35 +82,37 @@ follow.
 
 ### Updated architecture status
 
-The high-level stream is now a ViT-B/16 projected to 1024 features. The trained
-low-level candidates are `NPRStream` (native raw-pixel crops, 256-d default
-output) and `NPRStream(frontend=BayarSRMFrontend())` (Bayar+SRM forensic
-frontend with the same downstream interface). `DetectorPipeline` still imports
-the obsolete FFT `FrequencyStream` and accepts one shared tensor, so it is not
-yet the final explainability target.
+The published fused detector fixes the topology at ViT-B/16 semantic features
+projected to 1024 dimensions plus a Bayar+SRM forensic frontend with the shallow
+ResNet backbone and 256-dimensional output. Its fusion checkpoint was trained
+with both branch inputs derived from one 512x512 resize: ImageNet-normalized for
+the semantic branch and raw `[0,1]` pixels for the forensic branch. The legacy
+shared-input FFT `DetectorPipeline` remains obsolete and is not the final
+explainability target.
 
-- [ ] `npr_stream.py` — run the M3 resize/downscale stress test (go/no-go, see
-      npr_stream_guide.md §7) for NPR and Bayar+SRM. Select the active forensic
-      frontend from the measured robustness result; this is a model-selection
-      gate, not an automatic frontend swap.
+- [x] Select Bayar+SRM with the shallow ResNet backbone as the active forensic
+      branch for the published fused detector; retain NPR only as an experiment
+      and provenance artifact.
 - [ ] Replace the legacy `frequency` block in `configs/model_config.yaml` with
-      explicit selected-forensic settings (frontend, backbone, output dimension,
-      crop policy, and aggregation).
-- [ ] `fusion.py` — upgrade concat+linear to cross-attention fusion, keeping the
-      `-> [B, 512]` contract.
+      the selected Bayar+SRM frontend, shallow backbone, 256 output dimensions,
+      and the canonical shared 512-resize preprocessing contract.
+- [x] Retain the trained concat+linear `FeatureFusion -> [B, 512]` architecture
+      for checkpoint compatibility. Cross-attention would require retraining and
+      is not part of the final published model workflow.
 - [ ] Verify total parameter count stays under the 2B budget (target ~337M) for
       the selected semantic+forensic topology and add an automated check.
 - [ ] `tests/test_models.py` — add shape/contract tests for `NPRStream`,
-      `BayarSRMFrontend`, and fusion, including raw-crop versus
-      normalized-resize input validation and frozen-weights determinism.
+      `BayarSRMFrontend`, the canonical fused detector, shared-resize branch
+      preparation, raw-logit output, and frozen-weights determinism.
 
 ## 3. Training (`training/train_semantic.py`, `training/train_npr.py`, `training/train_bayar_srm.py`)
 
-The semantic and forensic candidates train independently (own script, own
-checkpoint) so each can be evaluated before fusion. NPR and Bayar+SRM use a
-distinct native-crop/raw-[0,1] data path; semantic uses
-resized/ImageNet-normalized tensors. These preprocessing contracts must be
-retained when the streams are fused.
+The semantic and forensic candidates were trained independently before fusion.
+Standalone NPR and Bayar+SRM training use native raw-pixel crops, but the
+published fusion checkpoint was trained through `AIGCDataModule`: one 512x512
+resize is normalized for the semantic stream and denormalized back to `[0,1]`
+for the frozen Bayar+SRM stream. That actual fused-training contract is
+authoritative for the published final weights.
 
 - [x] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`, plus
       a mock loop (real forward/BCE-loss/backward/optimizer.step over a few
@@ -128,22 +131,21 @@ retained when the streams are fused.
       comparison with NPR.
 - [ ] Add a self-describing final checkpoint bundle/manifest (complete fused
       detector state, topology, selected frontend and backbone, feature
-      dimensions, crop size and count, resize/normalization policy, aggregation
-      rule, threshold, and model identity). Standalone stream files and probe
-      heads are initialization/provenance artifacts, not the final model state.
-- [ ] Make the selected forensic output dimension explicit in fusion (NPR's
-      default is 256; the ConvNeXt-Tiny option is 768) and decide whether a
-      standalone semantic probe head must also be retained; never rely on the
-      old `FeatureFusion(freq_dim=768)` default by accident.
-- [ ] After individual validation and low-level selection: replace the current
-      shared-input `DetectorPipeline` path with a canonical raw-image inference
-      path that creates semantic resized/normalized input and deterministic
-      native forensic crops, then performs the chosen crop aggregation and fused
-      logit calculation.
-- [ ] Jointly fine-tune/evaluate that final fused detector from the selected
-      stream checkpoints. Remove the obsolete `FrequencyStream` loading path;
-      do not rely on key remapping to make its incompatible checkpoint and input
-      contract appear valid.
+      dimensions, 512 resize/interpolation and normalization policy, forensic
+      pixel range, threshold, model identity, schema version, and source-file
+      hashes). Bundle the semantic, Bayar+SRM, fusion, and classifier states;
+      standalone files remain provenance artifacts.
+- [ ] Add a canonical fused detector under `src/models/` with explicit
+      `semantic_dim=1024`, `forensic_dim=256`, and `fused_dim=512`; return raw
+      logits from `forward()` without internal `no_grad` or sigmoid behavior.
+- [ ] Replace the provisional `predict.py`-local wrapper and obsolete
+      `DetectorPipeline` path with one raw-image preparation path that performs
+      a deterministic 512x512 resize once, derives normalized semantic and raw
+      forensic tensors from the same pixels, and then calculates the fused
+      logit. Do not retain the current separate 256x256 forensic resize.
+- [ ] Verify strict loading and numerical parity between the published
+      three-file checkpoint and the self-describing bundle. Retraining or
+      native-crop/top-k aggregation is out of scope for these final weights.
 
 ## 4. Robustness Evaluation (`training/evaluation/`, `training/evaluate.py`)
 
@@ -298,12 +300,15 @@ Suggested files: `src/explainability/branch_contributions.py` and
 
 ### Phase 6: Deletion/insertion faithfulness
 
+- [ ] Start this phase only after the final-model adapter exposes the canonical
+      deterministic raw-image scorer; it is no longer part of the model-free
+      Wave 3 composition gate.
 - [ ] Implement deletion and insertion against a raw-image scoring callback,
       configurable patch size, perturbation count, baseline, and logit selector.
 - [ ] Perturb raw source images and regenerate every active branch input after
       each step rather than perturbing one model-specific tensor.
-- [ ] Preserve adapter-owned deterministic context such as crop coordinates,
-      resize policy, forensic frontend transforms, and crop aggregation
+- [ ] Preserve the adapter-owned 512 resize/interpolation, semantic
+      normalization, forensic `[0,1]` conversion, and frontend transforms
       throughout every perturbation sequence.
 - [ ] Prefer blur or dataset-mean baselines and patch-level perturbations to
       avoid introducing synthetic forensic edges.
@@ -351,25 +356,33 @@ explanations/<sample-id>/*.png
 
 ### Phase 8: Final-model adapter
 
-- [ ] After the final architecture gate and model work merge, add one isolated
+- [ ] After the canonical fused detector and checkpoint bundle pass their gate,
+      add one isolated
       `src/explainability/adapters/detector_adapter.py` implementation.
 - [ ] Consume and strictly validate the self-describing checkpoint manifest:
-      final topology (`semantic` + selected `forensic`), frontend/backbone,
-      feature dimensions, complete fused-detector state, crop policy,
-      aggregation rule, preprocessing, and decision threshold. Treat standalone
-      stream/probe heads as initialization or provenance only.
+      `semantic` + `forensic` topology, Bayar+SRM/shallow-ResNet selection,
+      feature dimensions, complete fused-detector state, shared 512 resize,
+      normalization/pixel-range policies, decision threshold, identity, schema,
+      and source hashes. Treat standalone files as provenance only.
 - [ ] Strictly load and validate the final checkpoint and record its identity and
       preprocessing metadata in reports.
 - [ ] Construct branch-specific prepared inputs from each raw source image:
-      semantic resized/normalized input plus deterministic native forensic crops.
+      resize once to 512x512, then derive the normalized semantic tensor and raw
+      `[0,1]` forensic tensor from the same resized pixels.
 - [ ] Expose the final AI logit plus named attribution targets and intermediate
       representations for each supported branch. For Bayar+SRM, expose Bayar,
       SRM, and fused frontend representations as forensic internals rather than
       pretending they are independent detector branches.
-- [ ] Preserve deterministic preparation context, including crop coordinates,
-      resize policy, forensic frontend transforms, and crop aggregation where
-      applicable.
-- [ ] Expose complete branch coalitions when contribution analysis is supported.
+- [ ] Preserve deterministic preparation context, including interpolation,
+      normalization, pixel range, original/resized dimensions, and forensic
+      frontend transforms.
+- [ ] Expose complete branch coalitions only when the bundle records an explicit
+      feature-ablation baseline, preferably calibration-set means; otherwise
+      return a structured unsupported reason rather than silently using zeros.
+- [ ] Mark plain attention rollout unsupported for the current torchvision ViT
+      because its forward path does not expose attention matrices. Do not invent
+      attention tensors; expose supported semantic attribution and token-grid
+      Grad-CAM targets instead.
 - [ ] Omit unsupported explanation methods with a structured reason instead of
       inventing outputs.
 - [ ] Keep this adapter as the only module containing knowledge of final branch
@@ -377,11 +390,15 @@ explanations/<sample-id>/*.png
 
 ### Phase 9: Application integration
 
+- [ ] Replace the provisional `predict.py`-local `BayarFusionModel` with the
+      canonical fused detector/adapter and remove the separate 256x256 forensic
+      resize. Normal prediction must fail clearly when final weights are absent
+      instead of silently returning random-weight predictions.
 - [ ] Replace `app.py`'s `_mock_saliency_overlay` with all adapter-supported
-      explanation views, including semantic attribution, attention,
-      forensic frontend/intermediate visualization, and branch Grad-CAM where
-      available. Keep the coordinate space and raw scale explicit for every
-      forensic output.
+      explanation views, including semantic attribution, forensic
+      frontend/intermediate visualization, and branch Grad-CAM where available.
+      Display attention rollout as unsupported for this model. Keep coordinate
+      space and raw scale explicit for every forensic output.
 - [ ] Never overlay non-image-coordinate maps (for example forensic/frequency
       planes) on the original image.
 - [ ] Add branch contributions and a raw JSON explanation component to Gradio.
@@ -522,46 +539,61 @@ Wave 2 implementation handoff and parent review:
 - [ ] Add plot generation and output assembly on top of the accepted evaluation
       report schemas.
 - [ ] Integrate robustness report generation second.
-- [ ] Implement deletion/insertion faithfulness after raw-image scoring and
-      deterministic-context contracts are stable.
 - [ ] Add JSONL parsing and standalone CLIs only after report and serialization
       APIs are accepted.
 - [ ] Parent review gate: run the complete model-free workflow from prediction
-      fixtures to metrics/plots and from a toy model/image to explanation maps,
-      faithfulness curves, rendering, and JSON.
+      fixtures to metrics, plots, robustness outputs, rendering, JSON, CSV, and
+      standalone CLI artifacts. Deletion/insertion moves after the adapter gate.
 
 #### Wave 3.5: Final architecture and checkpoint gate
 
-- [ ] Run the NPR and Bayar+SRM resize/downscale evaluations on comparable
-      held-out data and select exactly one active low-level `forensic` branch
-      for the first production detector.
-- [ ] Implement and validate the final raw-image multi-input detector/trainer:
-      semantic resized/normalized input, deterministic native forensic crops,
-      explicit crop aggregation, and a fused logit. Do not adapt explainability
-      to the obsolete shared-input FFT `DetectorPipeline`.
-- [ ] Produce a self-describing checkpoint bundle and verify strict loading,
-      deterministic preparation, output threshold, and real-checkpoint
-      predictions before exposing any explanation target.
+- [x] Accept the published final topology as ViT-B/16 semantic plus one
+      Bayar+SRM/shallow-ResNet forensic branch; NPR and the FFT frequency stream
+      are not active final branches.
+- [ ] Implement and validate the canonical fused detector with raw-logit output
+      and one deterministic 512x512 resize feeding both branch-specific tensor
+      views. Remove the provisional separate 256 forensic resize; do not add
+      native-crop/top-k behavior without retraining the fused checkpoint.
+- [ ] Produce a self-describing checkpoint bundle from the published semantic,
+      Bayar+SRM, and fusion/classifier files. Verify strict loading, source
+      hashes, deterministic preparation, threshold `0.5`, and numerical parity
+      with the three-file scorer before exposing any explanation target.
 - [ ] Record the final branch names, internal representations, preprocessing,
       target layers, and unsupported capabilities as the input contract for
       Wave 4.
 
-#### Wave 4: Final-model adapter (sequential, blocked on final model decision)
+Post-merge model audit:
 
-- [ ] Confirm the selected final detector is semantic + one selected forensic
-      branch (NPR or Bayar+SRM), along with its preprocessing and checkpoint
-      contracts, before assigning Phase 8. Add more top-level branches only if
-      the fused model independently exposes them.
+- The downloaded stream checkpoints are bare state dictionaries and
+  `detector_fusion.pt` contains only `fusion` and `classifier`; no file records
+  topology, preprocessing, threshold, identity, or schema metadata.
+- Fusion training used normalized 512x512 tensors and derived forensic
+  `[0,1]` tensors by denormalization. Current app/CLI inference instead resizes
+  the forensic input separately to 256x256 and must be corrected.
+- On `test_sample.jpg`, the published weights produced `0.4153479` with the
+  provisional 256 forensic resize and `0.4053786` with the 512 fused-training
+  contract, confirming that the mismatch is behaviorally material.
+
+#### Wave 4: Final-model adapter (sequential, blocked on Wave 3.5 bundle gate)
+
+- [ ] Confirm the canonical detector and self-describing bundle reproduce the
+      published checkpoint before assigning Phase 8.
 - [ ] Assign one Luna increment to the architecture adapter; keep branch-specific
-      preprocessing, target selection, crop handling, branch ablation, and
+      preprocessing, target selection, branch ablation, and
       checkpoint validation together.
 - [ ] Sol review gate: validate explanations against a real checkpoint and
       deterministic samples, including unsupported-capability behavior.
+- [ ] Implement and review deletion/insertion faithfulness against the accepted
+      adapter's raw-image scorer, then run toy-ranking and real-checkpoint smoke
+      tests.
 
 #### Wave 5: Product integration (sequential)
 
-- [ ] Integrate `predict.py` and complete its Sol review first.
-- [ ] Integrate `app.py` only after the CLI path is accepted.
+- [ ] Migrate `predict.py` from its provisional model wrapper to the accepted
+      detector/adapter and complete its Sol review first.
+- [ ] Migrate `app.py`, remove the placeholder saliency map and random-weight
+      normal-operation fallback, and add supported explanation views only after
+      the CLI path is accepted.
 - [ ] Add integration documentation and end-to-end tests last.
 - [ ] Route required shared-adapter changes through a separate reviewed Luna
       correction rather than changing the adapter incidentally in product work.
@@ -677,21 +709,22 @@ Recommended next iteration:
 - [ ] Keep metrics independent of PyTorch where practical.
 - [ ] Use versioned schemas and capability checks rather than hard-coded branch
       names, feature dimensions, or target-layer paths.
-- [ ] Rebase after the final model branches merge, then adapt to the resulting
-      architecture rather than adding compatibility for the obsolete detector.
+- [x] Rebase after the final model branches merge and audit the published
+      semantic + Bayar/SRM fused architecture before adapter implementation.
 - [ ] Use existing `torch`, `numpy`, `scikit-learn`, and `matplotlib`
       dependencies by default; agree with the team before adding Captum.
 
 ## 6. Integration & Polish
 
-- [ ] End-to-end run: real dataset -> train selected active streams -> final
-      fusion/joint training -> strict checkpoint load -> robustness report ->
+- [ ] End-to-end run: published checkpoint bundle -> strict canonical-detector
+      load -> deterministic 512 preprocessing -> robustness report ->
       explainability CLI -> Gradio app.
-- [ ] Decide and document the final branch topology: semantic + selected
-      forensic (NPR or Bayar+SRM). Remove obsolete FFT training/inference paths
-      only after that decision and checkpoint compatibility are confirmed.
-- [ ] Load a real checkpoint into `app.py` (currently always runs stub/random
-      weights).
+- [x] Decide the final branch topology: ViT-B/16 semantic plus
+      Bayar+SRM/shallow-ResNet forensic. Keep NPR as experimental provenance and
+      remove obsolete FFT inference after bundle parity is confirmed.
+- [ ] Replace `app.py`'s provisional three-file loader with the strict final
+      bundle loader; missing weights must produce a clear unavailable state,
+      not normal-operation random predictions.
 - [ ] Restrict `app.py` image upload to `.jpg`/`.png`/`.webp` at the component
       level (currently relies on PIL's default decode support).
 - [ ] Add CI (GitHub Actions or similar) running `pytest tests/` on every PR.
