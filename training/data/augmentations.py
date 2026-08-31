@@ -107,6 +107,9 @@ class RobustnessTransforms:
                 hue=tuple(jitter["hue"]),
                 p=p,
             ),
+            # Some source images are narrower than the fixed crop size. Pad
+            # first so the robustness transform works for every aspect ratio.
+            A.PadIfNeeded(min_height=crop_size, min_width=crop_size, border_mode=0, p=1.0),
             A.CenterCrop(height=crop_size, width=crop_size, p=p),
             *_tail(image_size),
         ]
@@ -126,7 +129,10 @@ class RobustnessTransforms:
             degradation = [A.GaussNoise(std_range=(severity, severity), p=1.0)]
         elif transform == "crop":
             crop_size = max(1, int(round(severity * image_size)))
-            degradation = [A.CenterCrop(height=crop_size, width=crop_size, p=1.0)]
+            degradation = [
+                A.PadIfNeeded(min_height=crop_size, min_width=crop_size, border_mode=0, p=1.0),
+                A.CenterCrop(height=crop_size, width=crop_size, p=1.0),
+            ]
         elif transform == "clean":
             degradation = []
         return A.Compose([*degradation, *_tail(image_size)], save_applied_params=True)
