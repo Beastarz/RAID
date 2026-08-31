@@ -20,7 +20,6 @@ teammates can iterate on a stream each without touching the same file.
 import argparse
 import sys
 import time
-from itertools import cycle
 from pathlib import Path
 from typing import List, Optional
 
@@ -40,9 +39,15 @@ from training.logging_utils import setup_logger  # noqa: E402
 class SemanticProbe(nn.Module):
     """SemanticStream + a linear classification head, trained standalone."""
 
-    def __init__(self, feature_dim: int = OUTPUT_DIM) -> None:
+    def __init__(self, feature_dim: int = OUTPUT_DIM, pretrained: bool = False,
+                 freeze_backbone: bool = True, unfreeze_last_n_blocks: int = 0) -> None:
         super().__init__()
-        self.stream = SemanticStream(output_dim=feature_dim)
+        self.stream = SemanticStream(
+            output_dim=feature_dim,
+            pretrained=pretrained,
+            freeze_backbone=freeze_backbone,
+            unfreeze_last_n_blocks=unfreeze_last_n_blocks,
+        )
         self.head = nn.Linear(feature_dim, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -57,6 +62,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=None, help="Override config's batch_size")
     parser.add_argument("--lr", type=float, default=None, help="Override config's lr")
     parser.add_argument("--steps", type=int, default=2, help="Number of mock optimizer steps to run")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of training epochs")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--log-level", type=str, default=None, help="Override config's log_level")
     return parser.parse_args(argv)
@@ -76,7 +82,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     log_level = args.log_level or config["log_level"]
 
     logger = setup_logger("training", log_level)
-    logger.info("MOCK SEMANTIC STREAM TRAINING -- SemanticStream is still a pool+linear stub, see TODO.md SS3")
+    logger.info("SEMANTIC STREAM TRAINING -- ViT-B/16 semantic backbone")
 
     torch.manual_seed(config["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -85,33 +91,52 @@ def main(argv: Optional[List[str]] = None) -> None:
     datamodule = AIGCDataModule(config, augmentations_config)
     train_loader = datamodule.train_dataloader()
 
-    model = SemanticProbe().to(device)
+    semantic_config = config.get("semantic", {})
+    model = SemanticProbe(
+        feature_dim=semantic_config.get("output_dim", OUTPUT_DIM),
+        pretrained=semantic_config.get("pretrained", False),
+        freeze_backbone=semantic_config.get("freeze_backbone", True),
+        unfreeze_last_n_blocks=semantic_config.get("unfreeze_last_n_blocks", 0),
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = torch.nn.BCEWithLogitsLoss()
-    logger.info("Model built: %d parameters, lr=%g", sum(p.numel() for p in model.parameters()), lr)
+    counts = model.stream.parameter_counts()
+    logger.info("Model built: total=%d trainable=%d frozen=%d parameters, lr=%g",
+                counts["total"], counts["trainable"], counts["frozen"], lr)
 
     model.train()
-    batch_iter = cycle(train_loader)
-    for step in range(1, args.steps + 1):
-        start = time.perf_counter()
-        images, labels = next(batch_iter)
-        images, labels = images.to(device), labels.to(device)
+    global_step = 0
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        for images, labels in train_loader:
+            start = time.perf_counter()
+            images, labels = images.to(device), labels.to(device)
+            optimizer.zero_grad()
+            logit = model(images)
+            loss = loss_fn(logit, labels)
+            loss.backward()
+            optimizer.step()
+            global_step += 1
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            logger.info("epoch=%d/%d step=%d loss=%.4f elapsed_ms=%.1f",
+                        epoch, args.epochs, global_step, loss.item(), elapsed_ms)
+            if global_step >= args.steps:
+                break
+        if global_step >= args.steps:
+            break
 
-        optimizer.zero_grad()
-        logit = model(images)
-        loss = loss_fn(logit, labels)
-        loss.backward()
-        optimizer.step()
-
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        logger.info(
-            "step=%d/%d batch=%s loss=%.4f elapsed_ms=%.1f",
-            step,
-            args.steps,
-            tuple(images.shape),
-            loss.item(),
-            elapsed_ms,
-        )
+        model.eval()
+        correct = total = 0
+        validation_loss = 0.0
+        with torch.no_grad():
+            for images, labels in datamodule.val_dataloader():
+                images, labels = images.to(device), labels.to(device)
+                logits = model(images)
+                validation_loss += loss_fn(logits, labels).item() * labels.size(0)
+                correct += ((torch.sigmoid(logits) >= 0.5) == (labels >= 0.5)).sum().item()
+                total += labels.numel()
+        logger.info("epoch=%d validation_loss=%.4f validation_accuracy=%.3f",
+                    epoch, validation_loss / max(total, 1), correct / max(total, 1))
 
     checkpoint_dir = Path(args.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)

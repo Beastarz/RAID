@@ -1,4 +1,4 @@
-# AI Image Detector
+# RAID - Robust AI-generated Image Detector
 
 Modular dual-stream framework for robust AI-generated image detection, designed to
 stay accurate under real-world post-processing (JPEG compression, blur, rescaling,
@@ -14,17 +14,23 @@ documented in [`BLUEPRINT.md`](BLUEPRINT.md) and [`.claude/CLAUDE.md`](.claude/C
 
 ## Status
 
-The project is currently in the **scaffolding / stub phase**: all tensor contracts
-are implemented and verified end-to-end, but the real pretrained backbones have not
-been dropped in yet. This lets the data, evaluation, and explainability workstreams
-develop in parallel against a stable interface before the heavy models land.
+The project is transitioning out of the **scaffolding / stub phase**: the semantic
+stream now wraps a real backbone, while the frequency stream and fusion layer are
+still stubs. This lets the data, evaluation, and explainability workstreams develop
+in parallel against a stable interface while the remaining heavy models land.
 
 **Implemented so far:**
 
 - `src/models/base_stream.py` — abstract `BaseFeatureStream` interface shared by
   both extraction streams.
-- `src/models/semantic_stream.py` — `SemanticStream` stub (pool + linear projection)
-  producing `[B, 1024]` features. Marked for a DINOv2 / ViT backbone drop-in.
+- `src/models/semantic_stream.py` — `SemanticStream` wraps torchvision's ViT-B/16,
+  producing `[B, 1024]` features via a linear projection off the 768-dim backbone
+  output. Controlled by `configs/model_config.yaml`'s `semantic` block:
+  `pretrained` (download ImageNet weights vs. random init), `freeze_backbone`,
+  and `unfreeze_last_n_blocks` (partial fine-tuning of the last N encoder blocks
+  + final LayerNorm while the rest stays frozen). Exposes
+  `parameter_counts()` (`total`/`trainable`/`frozen`) for logging, and keeps the
+  frozen backbone in `eval()` mode even when the wrapping module is in `train()`.
 - `src/models/npr_stream.py` — `NPRStream`, the low-level forensic stream (replaces
   `frequency_stream.py`, which remains in the tree but is superseded and no longer
   part of the active architecture). Computes the fixed, parameter-free NPR residual
@@ -61,12 +67,24 @@ develop in parallel against a stable interface before the heavy models land.
   manifest CSV when `configs/base_config.yaml`'s `data.manifest_path` is set,
   else falls back to an in-memory synthetic dataset; `AIGCDataModule` wraps it
   into train/val `DataLoader`s.
-- `training/train_semantic.py` — real, runnable **mock** training loop: config →
-  datamodule → the stream + a small linear head → a few real
-  forward/BCE-loss/backward/optimizer steps → saves a checkpoint
-  (`checkpoints/semantic_stream.pt`). Trains the stream in isolation (bypasses
-  `fusion.py`) so a teammate can iterate on it without sharing a file. No
-  multi-epoch loop or joint fine-tuning of the fused `DetectorPipeline` yet.
+- `training/data/import_hf.py` — CLI that streams an image classification
+  dataset from the Hugging Face Hub (default `RAID-techjam/SID_Set`) without
+  downloading it in full, exports up to `--limit` samples as local JPEGs, and
+  writes a `manifest.csv` compatible with `AIGCDataset`. Infers the image/label
+  columns (overridable via `--image-column`/`--label-column`) and remaps
+  `SID_Set`'s three-way label (`0=real, 1=fully synthetic, 2=tampered`) onto
+  this project's binary contract (`0=Real`, `1=AI-Generated`).
+- `training/data/shuffle_manifest.py` — shuffles a manifest's rows (seeded) before
+  training reads it, since `AIGCDataModule` splits train/val by a contiguous index
+  range rather than a shuffled one.
+- `training/train_semantic.py` — real, runnable training loop for the semantic
+  stream: config → datamodule → `SemanticProbe` (`SemanticStream` + a linear
+  head) → multi-epoch (`--epochs`) forward/BCE-loss/backward/optimizer loop,
+  capped by `--steps` total optimizer steps, with a validation pass
+  (loss + accuracy) logged after each epoch → saves
+  `checkpoints/semantic_stream.pt`. Stream config (`pretrained`,
+  `freeze_backbone`, `unfreeze_last_n_blocks`, `output_dim`) comes from
+  `configs/base_config.yaml`'s `semantic` block.
 - `training/train_npr.py` — unlike the semantic script above, this is a **real**
   (not mock) short training loop for the NPR stream: a train/val split, AdamW +
   cosine LR schedule, a class-imbalance-aware BCE loss, and per-epoch val
@@ -79,12 +97,6 @@ develop in parallel against a stable interface before the heavy models land.
 - `training/test_npr.py` — evaluates a trained NPR checkpoint (both files above)
   on the exact same held-out val split `train_npr.py` used, reporting loss,
   accuracy, and AUC.
-- `training/data/import_hf.py` — streams a real Hugging Face image dataset (e.g.
-  `RAID-techjam/SID_Set`) into a local `image_path,label` manifest CSV, collapsing
-  multi-class labels to the project's binary contract.
-- `training/data/shuffle_manifest.py` — shuffles a manifest's rows (seeded) before
-  training reads it, since `AIGCDataModule` splits train/val by a contiguous index
-  range rather than a shuffled one.
 - `training/evaluate.py` — a light mock sweep through the eval-mode
   `RobustnessTransforms`, logging shapes/probabilities per severity level; real
   metric computation (`training/evaluation/`) isn't implemented yet.
@@ -92,19 +104,18 @@ develop in parallel against a stable interface before the heavy models land.
   logs dataset/datamodule sizes at INFO and per-sample augmentation params at
   DEBUG, for tracing data flow and debugging.
 
-**Not yet implemented:** a real semantic backbone (still the pool+linear stub), the
-full (non-mock, multi-epoch) semantic training loop, joint fine-tuning of the fused
-`DetectorPipeline` (and loading the per-stream checkpoints into it for evaluation),
-the robustness metrics/benchmark suite (`training/evaluation/metrics.py`,
-`robustness_suite.py`), and the real explainability visualizer
-(`src/explainability/`) — these currently exist only as empty module stubs or
-mocks. The NPR stream is ahead of this list: it has a real backbone, a real
-multi-epoch training loop, and a real (if partial) dataset behind it — see above.
+**Not yet implemented:** joint fine-tuning of the fused `DetectorPipeline` (and loading the per-stream
+checkpoints into it for evaluation), a real (non-`import_hf.py`-subset) image
+dataset for full training runs, the robustness metrics/benchmark suite
+(`training/evaluation/metrics.py`, `robustness_suite.py`), and the real
+explainability visualizer (`src/explainability/`) — these currently exist only
+as empty module stubs or mocks.
 
-Because the semantic stream and fusion layer are still untrained stubs, end-to-end
-`DetectorPipeline` predictions are **not yet meaningful** — only the NPR stream
-in isolation (via `train_npr.py`/`test_npr.py`) has been validated against real data
-so far.
+The semantic stream can now be trained meaningfully (real ViT-B/16 backbone +
+real data via `import_hf.py`), but end-to-end predictions through
+`DetectorPipeline` are **still not meaningful** until the frequency stream and
+fusion layer get real backbones and the streams are jointly fine-tuned.
+
 
 ## Project Structure
 
@@ -165,6 +176,11 @@ Windows (PowerShell):
 pip install -r requirements.txt
 ```
 
+Includes `datasets` (Hugging Face) for `training/data/import_hf.py`. Set
+`configs/base_config.yaml`'s `semantic.pretrained: true` to download
+torchvision's ImageNet-pretrained ViT-B/16 weights on first run; the default
+(`false`) keeps everything offline for smoke tests.
+
 ### 5. Verify the tensor contracts
 
 Confirms Stream 1, Stream 2, Fusion, and the Detector output all match the shapes
@@ -196,7 +212,12 @@ python predict.py --image test_sample.jpg
 Expected output — one JSON line, e.g.:
 
 ```json
-{"filename": "test_sample.jpg", "ai_probability": 0.49, "label": "Authentic", "execution_time_ms": 8.7}
+{
+  "filename": "test_sample.jpg",
+  "ai_probability": 0.49,
+  "label": "Authentic",
+  "execution_time_ms": 8.7
+}
 ```
 
 You can also point `--image` at a directory to run batch inference (one JSON line
@@ -227,19 +248,35 @@ pytest tests/
 
 `tests/test_data.py` covers the augmentation shape contract, the dataset
 label/shape contract, and a smoke test per stream-training script (including
-that it writes its checkpoint file). `test_models.py` / `test_evaluation.py`
-are still empty stubs.
+that it writes its checkpoint file). `test_models.py` covers `SemanticStream`'s
+output contract, non-RGB input rejection, freeze/unfreeze-last-N-blocks
+behavior, `parameter_counts()` consistency, and `DetectorPipeline`'s output
+contract. `test_evaluation.py` is still an empty stub.
 
-### 9. Run the training pipeline
+### 9. (Optional) Import a real training subset
+
+```bash
+python -m training.data.import_hf --dataset RAID-techjam/SID_Set --split train --limit 100 --output data/sid_subset
+```
+
+Streams samples from a Hugging Face dataset (no full download), exports them
+as JPEGs, and writes `data/sid_subset/manifest.csv`. Point
+`configs/base_config.yaml`'s `data.manifest_path` at that CSV to train against
+real images instead of the synthetic fallback.
+
+
+### 10. Run the training pipeline
 
 ```bash
 # Semantic stream: still a mock loop (fixed step count, stub backbone)
-python -m training.train_semantic --config configs/base_config.yaml --steps 2 --log-level DEBUG
+python -m training.train_semantic --config configs/base_config.yaml --epochs 2 --steps 200 --log-level DEBUG
+python -m training.train_frequency --config configs/base_config.yaml --steps 2 --log-level DEBUG
 
 # NPR stream: a real training loop (5 epochs by default)
 python -m training.train_npr --config configs/base_config.yaml --log-level INFO
 python -m training.test_npr --config configs/base_config.yaml
 
+# Evaluation:
 python -m training.evaluate --config configs/augmentations.yaml
 ```
 
@@ -248,9 +285,12 @@ dataset needed) and log the data flow at each stage — DEBUG level shows which
 augmentations fired per sample. Point `configs/base_config.yaml`'s
 `data.manifest_path` at a manifest produced by `training/data/import_hf.py` +
 `shuffle_manifest.py` to train on real data instead — every script here falls
-back to synthetic automatically if that path doesn't exist yet. `train_semantic.py`
-and `evaluate.py` still don't train/measure anything meaningful (stub backbone,
-mock loop); `train_npr.py`/`test_npr.py` do, once pointed at real data.
+back to synthetic automatically if that path doesn't exist yet. `train_npr.py`/`test_npr.py` 
+do, once pointed at real data.
+`train_semantic.py` runs a real multi-epoch
+loop (validation loss/accuracy logged after each epoch) capped by
+`--steps` total optimizer steps; Both write a checkpoint to `checkpoints/`; 
+see the "Not yet implemented" list above for what's still missing before predictions are meaningful.
 
 ## Contributing
 

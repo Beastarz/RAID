@@ -63,20 +63,27 @@ def predict(image: Image.Image) -> Tuple[str, float, Image.Image]:
 def build_interface():
     import gradio as gr
 
-    with gr.Blocks(title="AI Image Detector") as demo:
+    label_css = """
+    #label_output.ai-label textarea { background-color: #f8d7da !important; color: #d93025 !important; font-weight: bold; }
+    #label_output.real-label textarea { background-color: #d7f3df !important; color: #188038 !important; font-weight: bold; }
+    """
+
+    with gr.Blocks(title="RAID", css=label_css) as demo:
         gr.Markdown("# AI Image Detector\nUpload an image to estimate the probability it is AI-generated.")
         with gr.Row():
             with gr.Column():
                 image_input = gr.Image(type="pil", label="Upload Image", image_mode="RGB")
                 run_button = gr.Button("Run", variant="primary")
             with gr.Column():
-                label_output = gr.Textbox(label="Prediction")
-                prob_output = gr.Slider(minimum=0, maximum=100, label="P(AI-Generated) %", interactive=False)
+                label_output = gr.Textbox(label="Prediction", elem_id="label_output", interactive=False)
+                prob_output = gr.Slider(minimum=0, maximum=100, label="Confidence(AI-Generated) %", interactive=False)
                 heatmap_output = gr.Image(label="Saliency Map (placeholder)")
 
         def _run(image: Image.Image):
             label, prob, overlay = predict(image)
-            return label, round(prob * 100, 2), overlay
+            css_class = "ai-label" if label == "AI-Generated" else "real-label"
+            label_update = gr.update(value=label, elem_classes=[css_class])
+            return label_update, round(prob * 100, 2), overlay
 
         run_button.click(fn=_run, inputs=[image_input], outputs=[label_output, prob_output, heatmap_output])
 
