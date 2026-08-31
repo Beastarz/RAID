@@ -12,9 +12,8 @@ random_split partition), then only ever touches the val subset -- this is a
 genuine held-out check, not a re-score of data the model trained on. Loads
 `checkpoints/npr_stream.pt` (backbone) and `checkpoints/npr_head.pt`
 (classifier head) together, since train_npr.py saves them separately -- the
-stream-only file matches train_semantic.py/train_frequency.py's convention
-for a future DetectorPipeline fine-tune, but reconstructing predictions
-needs both.
+stream-only file matches train_semantic.py's convention for a future
+DetectorPipeline fine-tune, but reconstructing predictions needs both.
 """
 
 import argparse

@@ -32,7 +32,7 @@ class BayarFusionModel(torch.nn.Module):
         super().__init__()
         self.semantic = SemanticStream(pretrained=False).to(device)
         self.bayar = NPRStream(backbone="resnet_shallow", frontend=BayarSRMFrontend()).to(device)
-        self.fusion = FeatureFusion(semantic_dim=1024, freq_dim=256, fused_dim=512).to(device)
+        self.fusion = FeatureFusion(semantic_dim=1024, forensic_dim=256, fused_dim=512).to(device)
         self.classifier = torch.nn.Sequential(torch.nn.Linear(512, 128), torch.nn.GELU(), torch.nn.Linear(128, 1)).to(device)
         self.semantic.load_state_dict(torch.load(semantic_checkpoint, map_location=device))
         self.bayar.load_state_dict(torch.load(bayar_checkpoint, map_location=device))
@@ -74,8 +74,9 @@ def build_model(checkpoint: Optional[str], device: torch.device) -> DetectorPipe
     """Instantiates DetectorPipeline, loading weights from a checkpoint if given.
 
     With no checkpoint, the model runs with its randomly initialized stub
-    weights -- expected during early development, before real backbones are
-    dropped into the semantic/frequency streams.
+    weights -- expected before the semantic + forensic streams are jointly
+    fine-tuned through `fusion.py` (see TODO.md SS3). Use `--bayar` for the
+    real, jointly-trained inference path.
     """
     model = DetectorPipeline()
     if checkpoint:

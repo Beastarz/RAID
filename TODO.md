@@ -2,19 +2,20 @@
 
 Tracks remaining work for the AI Image Detector project. See [`README.md`](README.md)
 for what's already done and [`.claude/CLAUDE.md`](.claude/CLAUDE.md) /
-[`BLUEPRINT.md`](BLUEPRINT.md) for the architecture contracts everything below must
+[`architecture.md`](architecture.md) for the architecture contracts everything below must
 follow.
 
 ## Done
 
 - [x] `src/models/base_stream.py` — `BaseFeatureStream` abstract interface
 - [x] `src/models/semantic_stream.py` — stub, `[B, 3, H, W] -> [B, 1024]`
-- [x] `src/models/npr_stream.py` — `NPRStream`, replaces the `frequency_stream.py`
-      stub (kept on disk, superseded). Real NPR residual operator + swappable
-      backbone (`resnet_shallow`/`convnext_tiny`) + swappable frontend (for a
-      future Bayar+SRM fallback), `[B, 3, H, W] (raw [0,1], native crop) ->
-      [B, 256 or 768]`. Has an actual trained checkpoint (see below), not just a
-      stub.
+- [x] `src/models/npr_stream.py` — `NPRStream`, replaces the earlier
+      `frequency_stream.py` stub (since deleted; `NPRStream` is now
+      `DetectorPipeline`'s default forensic stream). Real NPR residual
+      operator + swappable backbone (`resnet_shallow`/`convnext_tiny`) +
+      swappable frontend (for the Bayar+SRM fallback, `src/models/frontend_bayar.py`),
+      `[B, 3, H, W] (raw [0,1], native crop) -> [B, 256 or 768]`. Has an
+      actual trained checkpoint (see below), not just a stub.
 - [x] `src/models/fusion.py` — `FeatureFusion` stub, `-> [B, 512]`
 - [x] `src/models/detector.py` — `DetectorPipeline`, returns `{logit, prob, features}`
 - [x] `predict.py` — single-image / directory CLI inference, JSON output
@@ -35,9 +36,8 @@ follow.
       debugging (per-sample augmentation params at DEBUG, dataset/datamodule
       sizes at INFO).
 - [x] `tests/test_data.py` — minimal critical-path tests: augmentation output
-      shape contract, dataset label/shape contract, and a smoke test per
-      stream-training script (`train_semantic.py`/`train_frequency.py`,
-      including checkpoint-file creation).
+      shape contract, dataset label/shape contract, and a smoke test for
+      `train_semantic.py` (including checkpoint-file creation).
 - [x] `training/data/import_hf.py` — streams a real image dataset from the
       Hugging Face Hub (default `RAID-techjam/SID_Set`), exports a `--limit`-sized
       JPEG subset, and writes an `AIGCDataset`-compatible `manifest.csv`
@@ -90,7 +90,7 @@ follow.
       the frequency backbone is in — add an automated check (semantic ViT-B/16
       alone is ~86M; `parameter_counts()` on `SemanticStream` already reports
       its share).
-- [ ] `tests/test_models.py` — add shape/contract tests for `frequency_stream.py`
+- [ ] `tests/test_models.py` — add shape/contract tests for `npr_stream.py`
       and `fusion.py`, plus a frozen-weights determinism test, once those
       backbones are real.
 
@@ -105,9 +105,10 @@ test.
 - [x] Wire up `--config`, `--batch_size`, `--lr` CLI args per `CLAUDE.md`, plus
       a mock loop (real forward/BCE-loss/backward/optimizer.step over a few
       `--steps`) that proves the data flow end-to-end, for each stream.
-- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt`,
-      `checkpoints/frequency_stream.pt`) — currently mock weights, not yet
-      meaningful.
+- [x] Save a checkpoint per stream (`checkpoints/semantic_stream.pt` and, at
+      the time, `checkpoints/frequency_stream.pt` -- the frequency-stream
+      trainer was later removed in favor of `train_npr.py`) — currently mock
+      weights, not yet meaningful.
 - [x] `train_semantic.py` — real multi-epoch loop (`--epochs`) with
       post-epoch validation loss/accuracy logging.
 - [x] `train_npr.py` — full real per-stream training loop: AdamW + cosine LR
@@ -119,7 +120,7 @@ test.
       wiring `training/evaluate.py` to load the two per-stream checkpoints
       into it instead of running a fresh random-init model. Note this needs a
       key-remapping step for NPR's checkpoint (`NPRStream`'s flat state dict
-      vs. `DetectorPipeline`'s `frequency_stream.*`-prefixed keys) and a
+      vs. `DetectorPipeline`'s `forensic_stream.*`-prefixed keys) and a
       resolution for the input-contract mismatch (NPR wants a raw native crop,
       semantic wants a resized/normalized tensor) -- `DetectorPipeline.forward`
       currently feeds one shared tensor to both streams.

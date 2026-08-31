@@ -8,8 +8,10 @@ semantic:
   unfreeze_last_n_blocks: 0
   output_dim: 1024
 
-frequency:
-  output_dim: 768
+forensic:
+  # Default: NPRStream(backbone="resnet_shallow"). Bayar+SRM variant (what
+  # the published checkpoints use) keeps the same output_dim.
+  output_dim: 256
 
 fusion:
   fused_dim: 512

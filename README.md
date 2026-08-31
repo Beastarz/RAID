@@ -101,7 +101,7 @@ flowchart TD
 ```
 
 Full module ownership and data-flow diagrams for the current implementation
-live in [`BLUEPRINT.md`](BLUEPRINT.md); the shared
+live in [`architecture.md`](architecture.md); the shared
 tensor contracts and coding conventions the team held each other to are in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md); the fuller writeup of what we
 learned and why we made the calls we did is in [`ABOUT.md`](ABOUT.md).
@@ -111,9 +111,9 @@ and evaluate meaningfully on their own. A real, jointly-trained pipeline —
 semantic + Bayar+SRM + fusion — is published and gives meaningful
 predictions today via `predict.py --bayar` (see [Reproducing our
 results](#reproducing-our-results) below). The default `DetectorPipeline`
-(semantic + the original FFT-based frequency stream) still runs on stub
-weights for the forensic stream and fusion layer, so its raw predictions
-aren't meaningful yet — this is what's left for a fully joint fine-tune.
+(semantic + a plain NPR forensic stream) still runs on stub weights for the
+forensic stream and fusion layer, so its raw predictions aren't meaningful
+yet — this is what's left for a fully joint fine-tune.
 
 ## Setup and Installation
 
@@ -254,7 +254,7 @@ python -m training.train_bayar_srm --config configs/base_config_bayar.yaml  # Ba
 # Fuse the two frozen streams + train the classification head
 python -m training.train_fusion --config configs/base_config.yaml \
   --semantic-checkpoint checkpoints/semantic_stream.pt \
-  --frequency-checkpoint checkpoints/bayar_srm_stream.pt
+  --forensic-checkpoint checkpoints/bayar_srm_stream.pt
 ```
 
 Each script falls back to an in-memory synthetic dataset if
@@ -311,7 +311,7 @@ architecture so nobody had to block on someone else's unfinished module:
   importer.
 - **Goh Jin Yu ([@Beastarz](https://github.com/Beastarz))** — Scaffolding,
   docs, and inference frontend: the original project blueprint/skeleton
-  (`BLUEPRINT.md`, `.claude/CLAUDE.md`, `TODO.md`), the data loader and
+  (`architecture.md`, `.claude/CLAUDE.md`, `TODO.md`), the data loader and
   augmentation pipeline scaffolding, the Gradio demo (`app.py`), and this
   README.
 - **Shawn Wee ([@McFishhh](https://github.com/McFishhh))** — Forensic stream

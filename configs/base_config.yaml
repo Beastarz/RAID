@@ -1,7 +1,7 @@
 # Configuration: base_config.yaml
 #
 # Global training parameters. Consumed by training/train_semantic.py,
-# training/train_frequency.py, and training/data/{dataset,datamodule}.py.
+# training/train_npr.py, and training/data/{dataset,datamodule}.py.
 
 seed: 42
 image_size: 512
@@ -15,12 +15,6 @@ semantic:
   freeze_backbone: true
   unfreeze_last_n_blocks: 2
   output_dim: 1024
-
-frequency:
-  pretrained: true
-  freeze_backbone: false
-  highpass_ratio: 0.08
-  output_dim: 768
 
 data:
   # Path to a manifest CSV with an `image_path,label` header (0=Real, 1=AI-Generated).

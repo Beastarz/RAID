@@ -1,4 +1,4 @@
-# Base Project Blueprint: Modular AI Image Detector
+# Architecture: Modular AI Image Detector
 
 This blueprint provides a clean, decoupled skeleton codebase for a hackathon team. It abstracts specific neural network models behind pluggable interfaces, allowing teammates to work in parallel on data pipelines, feature extraction backbones, fusion layers, evaluation benchmarks, and explainability modules without breaking each other's code.
 
@@ -17,18 +17,24 @@ ai-image-detector/
 │ │ ├── **init**.py
 │ │ ├── base_stream.py # Abstract class for extraction streams
 │ │ ├── semantic_stream.py # Stream 1: High-level semantic backbone wrapper
-│ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (replaces frequency_stream.py)
-│ │ ├── frequency_stream.py # SUPERSEDED by npr_stream.py; kept on disk, no longer part of the active architecture
+│ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (default forensic stream)
+│ │ ├── frontend_bayar.py # Swappable Bayar+SRM frontend for NPRStream (M3 fallback, see §4.B.3)
 │ │ ├── fusion.py # Cross-stream feature fusion layer
 │ │ └── detector.py # End-to-end PyTorch Lightning / PyTorch Module
 │ └── explainability/ # Team Member D: Diagnostic Tools (used by predict.py / app.py)
 │ ├── **init**.py
+│ ├── contracts.py # Versioned prediction/explanation record schemas
+│ ├── rendering.py # Heatmap normalization, colormaps, overlays
+│ ├── artifacts.py / serialization.py # PNG/NPY artifact storage, JSON serialization
 │ └── visualizer.py # Heatmap & attention map generation
 ├── training/ # Training pipeline — everything only the offline pipeline needs
 │ ├── **init**.py
 │ ├── train_semantic.py # Trains the semantic stream in isolation, saves a checkpoint
 │ ├── train_npr.py # Trains the NPR stream in isolation: real multi-epoch loop, own crop dataset
-│ ├── test_npr.py # Evaluates a trained NPR checkpoint on its held-out val split
+│ ├── train_bayar_srm.py # Trains NPRStream with the Bayar+SRM frontend swapped in
+│ ├── train_fusion.py # Fuses two frozen, already-trained streams + trains the classification head
+│ ├── test_npr.py / evaluate_npr.py # Evaluate a trained NPR checkpoint (held-out split / resize stress test)
+│ ├── evaluate_bayar_srm.py # Same, for the Bayar+SRM checkpoint
 │ ├── evaluate.py # Main evaluation CLI against benchmark transforms
 │ ├── data/ # Team Member A: Data & Augmentations
 │ │ ├── **init**.py
@@ -40,15 +46,18 @@ ai-image-detector/
 │ └── evaluation/ # Team Member C: Benchmark & Metrics
 │ ├── **init**.py
 │ ├── robustness_suite.py # Automated robustness test runner across transforms
-│ └── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
+│ ├── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
+│ ├── calibration.py # ECE, reliability bins, Brier score
+│ ├── schemas.py # Versioned report/record schemas
+│ └── report.py # JSON-serializable report assembly
 ├── tests/ # Integration and unit tests
-│ ├── test_data.py
-│ ├── test_models.py
-│ └── test_evaluation.py
-├── predict.py # Inference pipeline: single-image / Batch prediction script
+├── predict.py # Inference pipeline: single-image / Batch prediction script (--bayar for the real fused model)
+├── evaluate_predict.py # Evaluates the checkpoint trio against a labeled manifest
 ├── app.py # Inference pipeline: Gradio frontend
 ├── requirements.txt # Dependencies
-└── README.md # Setup and usage guide
+├── README.md # Setup and usage guide
+├── ABOUT.md # Project writeup: motivation, learnings, what's next
+└── architecture.md # This file
 
 ---
 
@@ -124,7 +133,7 @@ fall back to an in-memory synthetic dataset if that path doesn't exist yet.
 unless `--checkpoint` is given) fused `DetectorPipeline` directly -- it does
 not yet load the per-stream checkpoints above into it, and note that a raw
 `NPRStream` checkpoint's keys won't match `DetectorPipeline`'s
-`frequency_stream.*`-prefixed keys without remapping; wiring that up is
+`forensic_stream.*`-prefixed keys without remapping; wiring that up is
 tracked in `TODO.md` §3/§4.
 
 Entry points: `python -m training.train_semantic --config configs/base_config.yaml`,
@@ -206,11 +215,11 @@ Key classes to implement:
 - _Purpose_: Extracts deep semantic and contextual representations resilient to surface noise and downsampling.
 - _Wrapper Contract_: Accepts `[B, 3, H, W]`, outputs a high-level representation vector `[B, D1]`. Any suitable vision foundation backbone can be plugged into this class without changing downstream code.
 
-3. **Stream 2: Low-Level Forensic / NPR Stream (`npr_stream.py`, replaces `frequency_stream.py`)**:
+3. **Stream 2: Low-Level Forensic / NPR Stream (`npr_stream.py`)**:
 
 - _Purpose_: Reads the Neighboring Pixel Relationships (NPR) residual -- a fixed, parameter-free nearest-neighbour downsample-upsample round trip subtracted from the input -- which isolates the periodic local-correlation pattern every GAN/diffusion decoder's final upsampling stack leaves behind. Reference: Tan et al., CVPR 2024.
-- _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`) -- the frontend swap point specifically exists so a future Bayar constrained-conv + SRM-filter frontend can replace `NPR` behind the identical interface if a resize-robustness stress test shows the fixed operator doesn't hold up.
-- The earlier FFT-magnitude + pool/linear stub (`frequency_stream.py`) remains in the tree but is superseded and no longer part of the active architecture.
+- _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`).
+- The resize/downscale stress test (`training/evaluate_npr.py`) confirmed the fixed NPR operator collapses toward chance under aggressive rescaling, so the frontend swap point is exercised for real: `frontend_bayar.py`'s `BayarSRMFrontend` (a learnable Bayar constrained conv + fixed SRM filters) plugs into the identical interface as `NPRStream(frontend=BayarSRMFrontend())` -- this is what the published pretrained weights and `predict.py --bayar` use. `DetectorPipeline`'s default `forensic_stream` still uses plain `NPR`, since that default path is a shape-correct stub, not the trained model (see [Section 2](#2-pipeline-data-flow-training-vs-inference)).
 
 ### C. Fusion & Classification Head (`src/models/fusion.py` & `detector.py`)
 
