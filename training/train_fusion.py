@@ -48,8 +48,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     logger = setup_logger("training", args.log_level or config["log_level"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     semantic_cfg = config.get("semantic", {})
-    semantic_stream = SemanticStream(output_dim=semantic_cfg.get("output_dim", 1024), pretrained=False)
-    npr_stream = NPRStream(backbone="resnet_shallow", frontend=BayarSRMFrontend())
+    semantic_stream = SemanticStream(output_dim=semantic_cfg.get("output_dim", 1024), pretrained=False).to(device)
+    npr_stream = NPRStream(backbone="resnet_shallow", frontend=BayarSRMFrontend()).to(device)
     _load_stream(args.semantic_checkpoint, semantic_stream, device)
     _load_stream(args.frequency_checkpoint, npr_stream, device)
     for stream in (semantic_stream, npr_stream):
