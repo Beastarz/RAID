@@ -413,11 +413,22 @@ Wave 1 accepted handoff:
 
 #### Wave 2.0: Verification environment
 
-- [ ] Create a repository `.venv` and install `requirements.txt`.
-- [ ] Record the Python and dependency versions used for verification.
-- [ ] Run the existing full test suite and record the baseline before adding
+- [x] Create a repository `.venv` and install `requirements.txt`.
+- [x] Record the Python and dependency versions used for verification.
+- [x] Run the existing full test suite and record the baseline before adding
       attribution algorithms.
-- [ ] Use the same environment for every remaining focused and full-suite run.
+- [x] Use the same environment for every remaining focused and full-suite run.
+
+Wave 2.0 accepted handoff:
+
+- Repository-local environment: `.venv/`, created with Python 3.13.9 and
+  installed from the unpinned `requirements.txt`.
+- Exact direct dependency versions are recorded in
+  `docs/verification-environment.md`.
+- Baseline verification command: `PYTHONPATH=. .venv/bin/python -m pytest -q`.
+- Baseline result before attribution algorithms: `120 passed`.
+- All remaining focused and full-suite verification must use
+  `.venv/bin/python` rather than the system interpreter.
 
 #### Wave 2: Algorithms (sequential reviewed increments)
 
