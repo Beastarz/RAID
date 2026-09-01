@@ -23,13 +23,15 @@ a shared `BaseFeatureStream` interface:
   composition, and semantic irrelevancies (impossible anatomy, warped text,
   inconsistent lighting).
 - **Forensic stream** — reads low-level generation artifacts that survive
-  resizing and re-compression. The active implementation is **NPR**
-  (Neighboring Pixel Relationships): a fixed, parameter-free
-  downsample/upsample residual that isolates the periodic pattern every
-  GAN/diffusion decoder's upsampling stack leaves behind (Tan et al., CVPR
-  2024). A swappable Bayar constrained-conv + SRM-filter frontend was also
-  built behind the same interface as an alternative, and is what the
-  currently published pretrained weights use.
+  resizing and re-compression. The implementation is **Bayar+SRM**: a
+  learnable Bayar constrained convolution (its center tap hard-fixed at -1,
+  the other taps always renormalizing to sum to +1) combined with fixed SRM
+  high-pass filters, feeding a shallow ResNet backbone. An earlier candidate,
+  NPR (a fixed, parameter-free downsample/upsample residual, Tan et al. CVPR
+  2024), scored higher on clean validation AUC but collapsed toward chance
+  under a resize/downscale robustness stress test — Bayar+SRM's *learnable*
+  residual holds up better under the same test, which is why it's the one
+  actually used.
 
 Both streams feed a fusion layer and a compact classification head, capped
 under a **2B parameter budget** (target ~337M) so the whole pipeline stays
@@ -37,10 +39,9 @@ fast enough for hackathon-scale, single-GPU iteration.
 
 ### Architecture
 
-This is the original blueprint design the project was scaffolded from (backbone
-names/params are the initial targets — see the stream bullets above and
-[Limitations](#limitations--what-wed-improve-with-more-time) for what the
-active implementation actually uses):
+This reflects the actual implementation — the real backbones and the real
+Bayar+SRM forensic breakdown (see the stream bullets above and
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the full module-level data flow):
 
 ```mermaid
 flowchart TD
@@ -50,30 +51,32 @@ flowchart TD
     B -->|Inference| D
 
     subgraph PRE[Preprocessing]
-        D[Standardization Preprocessor]
+        D[Shared 512x512 Resize<br/>Pillow bilinear]
     end
 
-    D -->|512x512 Standard Tensor| E[Dual-Stream Feature Extractor]
+    D --> E{One Resize, Two Views}
+    E -->|ImageNet-normalized| F
+    E -->|Raw 0-1 pixels| G1
+    E -->|Raw 0-1 pixels| G2
 
     subgraph EXTRACT[Dual-Stream Feature Extraction]
-        E --> F
-        E --> G
         subgraph S1[Stream 1 — Semantic]
-            F[High-Level Foundation Backbone] -->|DINOv2-Large / 304M Params| H[Global Token & ViT Patch Embeddings]
+            F[ViT-B/16 Backbone<br/>86M Params, frozen<br/>except last N blocks] --> H[Linear Projection<br/>768 -> 1024-d]
         end
-        subgraph S2[Stream 2 — Frequency]
-            G[Mid-Level Frequency Stream] --> I[2D FFT Mid-Band Pass Masking]
-            I --> J[ConvNeXt-Tiny Backbone / 28M Params]
-            J --> K[Mid-Frequency Feature Map]
+        subgraph S2[Stream 2 — Forensic Bayar+SRM]
+            G1[Bayar Conv 5x5<br/>learnable, constrained] --> G3
+            G2[SRM Filters<br/>fixed, high-pass] --> G3
+            G3[Concat + 1x1 Fuse<br/>12 -> 3 channels] --> G4
+            G4[ResNet-50 Stem+Layer1<br/>~0.2M Params] --> K[Feature Vector<br/>256-d]
         end
     end
 
     subgraph FUSE[Fusion & Output]
-        H --> L[Cross-Attention Feature Fusion Layer]
+        H --> L[Concat + Linear + LayerNorm + GELU<br/>Fusion Layer]
         K --> L
-        L --> M[Fused Representation Vector]
+        L --> M[Fused Representation Vector / 512-d]
         M --> N[Classification Head: MLP Layer]
-        M --> O[Explainability Head: Grad-CAM / ViT Attention Map]
+        M --> O[Explainability: Grad-CAM / Integrated Gradients]
         N --> P[Prediction: Probability AI-Generated vs Authentic]
         O --> Q[Diagnostic Heatmap: Spatial Artifact Localization]
     end
@@ -90,7 +93,7 @@ flowchart TD
     class C,D pre;
     class E pre;
     class F,H stream1;
-    class G,I,J,K stream2;
+    class G1,G2,G3,G4,K stream2;
     class L,M,N,O,P,Q fuse;
 
     style PRE fill:#f5f3ff,stroke:#a78bfa,stroke-width:1px,color:#4c1d95
@@ -106,17 +109,16 @@ tensor contracts and coding conventions the team held each other to are in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md); the fuller writeup of what we
 learned and why we made the calls we did is in [`ABOUT.md`](ABOUT.md).
 
-**Status:** the semantic and forensic (NPR / Bayar+SRM) streams both train
-and evaluate meaningfully on their own. A real, jointly-trained pipeline —
+**Status:** the semantic and forensic (Bayar+SRM) streams both train and
+evaluate meaningfully on their own. A real, jointly-trained pipeline —
 semantic + Bayar+SRM + fusion — is published as a self-describing checkpoint
 bundle and gives meaningful predictions today via `predict.py` (see
 [Reproducing our results](#reproducing-our-results) below), including real
 Grad-CAM and forensic-intermediate explanations — see
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for how that's wired up. The default
-`DetectorPipeline` (semantic + a plain NPR forensic stream, no bundle) still
-runs on stub weights for the forensic stream and fusion layer, so its raw
-predictions aren't meaningful — it remains only for standalone stream
-research, not as an inference entry point.
+`DetectorPipeline` (no bundle) still runs on stub weights for the fusion
+layer, so its raw predictions aren't meaningful — it remains only for
+standalone stream research, not as an inference entry point.
 
 ## Setup and Installation
 
@@ -214,10 +216,9 @@ python evaluate_predict.py --manifest path/to/manifest.csv \
 **Reported numbers:** on a 10,000-image `SID_Set` subset, the Bayar+SRM
 model reached ~0.8738 clean validation AUC. Resize robustness improved after
 training with resize augmentation, reaching ~0.8459 AUC at 0.5x scale, while
-more aggressive 0.25x–0.35x scale conditions remained challenging. The NPR
-stream alone (evaluated independently, not yet fused) reached ~0.91 val AUC
-on its own held-out split. Treat all of these as hackathon-scale, not
-production-grade, numbers — see [Limitations](#limitations--what-wed-improve-with-more-time).
+more aggressive 0.25x–0.35x scale conditions remained challenging. Treat
+these as hackathon-scale, not production-grade, numbers — see
+[Limitations](#limitations--what-wed-improve-with-more-time).
 
 ### 3. Launch the demo app
 
@@ -256,9 +257,8 @@ manifest, then train each stream independently:
 # Semantic stream (ViT-B/16 + linear head)
 python -m training.train_semantic --config configs/base_config.yaml
 
-# Forensic stream — pick one:
-python -m training.train_npr --config configs/base_config.yaml        # NPR (parameter-free residual)
-python -m training.train_bayar_srm --config configs/base_config_bayar.yaml  # Bayar+SRM (what the published weights use)
+# Forensic stream (Bayar+SRM)
+python -m training.train_bayar_srm --config configs/base_config_bayar.yaml
 
 # Fuse the two frozen streams + train the classification head
 python -m training.train_fusion --config configs/base_config.yaml \
@@ -276,10 +276,10 @@ python -m training.build_detector_bundle \
 
 Each script falls back to an in-memory synthetic dataset if
 `data.manifest_path` isn't set, so every step above is runnable end-to-end
-without real data as a smoke test. Evaluate a trained stream standalone with
-`training/test_npr.py` / `training/evaluate_bayar_srm.py` (the latter also
-runs the resize/downscale robustness stress test), or benchmark the fused
-pipeline with `training/evaluate.py`.
+without real data as a smoke test. Evaluate the forensic stream standalone
+with `training/evaluate_bayar_srm.py` (also runs the resize/downscale
+robustness stress test), or benchmark the fused pipeline with
+`training/evaluate.py`.
 
 ## Limitations & What We'd Improve With More Time
 
@@ -290,12 +290,13 @@ pipeline with `training/evaluate.py`.
   2](#2-run-inference-with-our-pretrained-real-weights)) covers a real
   trained pipeline today, but it's a separate path from the one described in
   the original architecture, not a drop-in replacement for it.
-- **The forensic branch isn't fully settled.** We built two candidate
-  frontends (parameter-free NPR, and Bayar constrained-conv + SRM) behind a
-  swappable interface, but haven't finished the resize/downscale stress test
-  needed to say definitively which one holds up better under aggressive
-  rescaling — the published weights use Bayar+SRM, but NPR alone scores
-  higher on clean val AUC.
+- **The forensic branch's robustness ceiling is still low.** We tried a
+  parameter-free residual (NPR) first; it scored higher on clean val AUC but
+  collapsed toward chance under a resize/downscale stress test, so we swapped
+  to a learnable Bayar constrained-conv + SRM frontend behind the same
+  interface. Bayar+SRM holds up better but still degrades under aggressive
+  rescaling (see [Reported numbers](#2-run-inference-with-our-pretrained-real-weights))
+  — there's real headroom left here.
 - **Robustness is only spot-checked, not fully benchmarked.** We built the
   full degradation pipeline (JPEG Q30–90, blur, 0.25x–0.5x rescale, noise,
   jitter, 80% crop) and the eval scaffolding, but haven't yet generated the
@@ -315,7 +316,7 @@ pipeline with `training/evaluate.py`.
   Actions, so regressions can currently slip into a checkpoint unnoticed.
 
 With more time, the priority order would be: finish joint fusion training →
-settle NPR vs. Bayar+SRM with the resize stress test → run the full
+push Bayar+SRM's resize/downscale robustness further → run the full
 robustness benchmark → cover attention rollout and branch contributions →
 scale up the dataset.
 
