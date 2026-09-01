@@ -3,7 +3,7 @@ Module: base_stream
 Project: AI Image Detector
 
 Abstract interface shared by every feature-extraction stream (Stream 1:
-semantic, Stream 2: frequency). DO NOT modify without team consensus --
+semantic, Stream 2: forensic). DO NOT modify without team consensus --
 `FeatureFusion` and `DetectorPipeline` depend on this exact contract.
 """
 
@@ -18,8 +18,8 @@ class BaseFeatureStream(nn.Module, ABC):
 
     Concrete subclasses accept an image tensor ``[B, 3, H, W]`` and return a
     fixed-size feature vector ``[B, D]``, where ``D`` is defined by the
-    subclass (e.g. D=1024 for the semantic stream, D=768 for the frequency
-    stream).
+    subclass (e.g. D=1024 for the semantic stream, D=256 for the default
+    NPR forensic stream).
     """
 
     @abstractmethod

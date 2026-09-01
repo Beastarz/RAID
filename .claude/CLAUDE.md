@@ -23,13 +23,13 @@ This repository contains a modular prototype for distinguishing AI-generated ima
 - `src/models/` (shared by both pipelines):
 - `base_stream.py`: Abstract class `BaseFeatureStream`. DO NOT modify without team consensus.
 - `semantic_stream.py`: Stream 1 (High-Level ViT / DINOv2 wrapper).
-- `frequency_stream.py`: Stream 2 (Mid-Level 2D FFT + ConvNeXt-Tiny wrapper).
+- `npr_stream.py`: Stream 2 (Low-level NPR forensic wrapper; swappable `frontend=`/`backbone=`, see `frontend_bayar.py`).
 - `fusion.py`: Cross-attention / Feature fusion layer.
 - `detector.py`: End-to-end `DetectorPipeline` PyTorch Lightning module.
 
 - `src/explainability/`: Grad-CAM and ViT attention heatmap visualizers, used by the inference pipeline (`predict.py --save_heatmap`, `app.py`).
 - `training/`: Everything the training pipeline owns, isolated from the inference pipeline:
-- `train_semantic.py` / `train_frequency.py`: independent entry-point CLIs, one per feature stream, each training its own stream + a small head and saving its own checkpoint. Deliberately separate files (no shared module between them) so two teammates can work on a stream each at once.
+- `train_semantic.py` / `train_npr.py`: independent entry-point CLIs, one per feature stream, each training its own stream + a small head and saving its own checkpoint. Deliberately separate files (no shared module between them) so two teammates can work on a stream each at once.
 - `evaluate.py`: entry-point CLI running the robustness benchmark against the fused `DetectorPipeline`.
 - `data/`: Dataset loaders (`AIGCDataset`), Albumentations robustness transform pipelines (`RobustnessTransforms`), and `import_hf.py` (streams a Hugging Face dataset into a local manifest CSV). Training-only — never imported by `predict.py` or `app.py`.
 - `evaluation/`: Automated benchmark runner (`RobustnessBenchmark`) and metrics testing performance across degradation spectrums. Training-only.
@@ -67,8 +67,8 @@ Each feature stream trains independently, from the repo root as a module so
 # Train the semantic stream (saves checkpoints/semantic_stream.pt)
 python -m training.train_semantic --config configs/base_config.yaml
 
-# Train the frequency stream (saves checkpoints/frequency_stream.pt)
-python -m training.train_frequency --config configs/base_config.yaml
+# Train the forensic (NPR) stream (saves checkpoints/npr_stream.pt)
+python -m training.train_npr --config configs/base_config.yaml
 
 # Both accept the same flags, e.g. batch size and learning rate
 python -m training.train_semantic --config configs/base_config.yaml --batch_size 32 --lr 1e-4
@@ -106,7 +106,7 @@ All team members must maintain strict compatibility with these tensor formats:
 
 - `forward(x: torch.Tensor) -> torch.Tensor`
 - Input: Image tensor `[B, 3, H, W]`.
-- Output: Feature vector `[B, D]` (e.g., `D1=1024` for Semantic, `D2=768` for Frequency).
+- Output: Feature vector `[B, D]` (e.g., `D1=1024` for Semantic, `D2=256` for the default NPR forensic stream).
 
 3. **Detector Output Dictionary**:
    `DetectorPipeline.forward()` MUST return a Python dictionary with the following keys:

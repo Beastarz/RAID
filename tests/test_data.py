@@ -73,7 +73,6 @@ def test_aigc_dataset_synthetic_mode_contract():
     "module_name,checkpoint_name",
     [
         ("training.train_semantic", "semantic_stream.pt"),
-        ("training.train_frequency", "frequency_stream.pt"),
     ],
 )
 def test_train_stream_main_smoke(tmp_path, module_name, checkpoint_name):

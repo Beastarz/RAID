@@ -7,18 +7,18 @@ forensic stream in isolation. Run from the repo root as:
     python -m training.train_npr --config configs/base_config.yaml
 
 Trains NPRStream + a small standalone classifier head (NOT the fused
-DetectorPipeline -- fusion.py/semantic_stream.py/frequency_stream.py aren't
-touched here). Unlike the fixed-step wiring smoke test this started as, this
+DetectorPipeline -- fusion.py/semantic_stream.py aren't touched here). Unlike
+the fixed-step wiring smoke test this started as, this
 is a real short training loop (5 epochs by default, per npr_stream_guide.md
 SS5): a train/val split, AdamW + cosine LR schedule, a pos_weight-balanced
 BCE loss, and per-epoch val loss/accuracy/AUC -- the checkpoint is only
 overwritten when val AUC improves, so `checkpoints/npr_stream.pt` always
 holds the best epoch seen, not just the last one.
 
-Deliberately self-contained (no shared module with train_semantic.py /
-train_frequency.py) so a teammate can iterate on this stream without
-touching a shared file -- and, unlike those two, NPR also cannot share their
-dataloader transform even in principle: per npr_stream_guide.md SS2.1, NPR's
+Deliberately self-contained (no shared module with train_semantic.py) so a
+teammate can iterate on this stream without touching a shared file -- and
+NPR also cannot share that dataloader transform even in principle: per
+npr_stream_guide.md SS2.1, NPR's
 residual signal is destroyed by resizing, so its input must be raw [0, 1]
 pixels at a native-resolution crop, never the resized + ImageNet-normalized
 tensor training/data/augmentations.py produces for the other streams. This
@@ -346,9 +346,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 best_val_auc = current_auc
             epochs_without_improvement = 0
             torch.save(model.stream.state_dict(), checkpoint_path)
-            # The stream-only checkpoint above matches train_semantic.py /
-            # train_frequency.py's convention (a future DetectorPipeline
-            # fine-tune only wants the backbone). The head is saved
+            # The stream-only checkpoint above matches train_semantic.py's
+            # convention (a future DetectorPipeline fine-tune only wants the
+            # backbone). The head is saved
             # separately so this run's classifier can still be evaluated
             # standalone -- see test_npr.py -- without overloading that
             # shared checkpoint format.

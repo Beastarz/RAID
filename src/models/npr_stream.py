@@ -26,8 +26,8 @@ stream via its existing constructor injection, e.g.:
     from src.models.detector import DetectorPipeline
 
     detector = DetectorPipeline(
-        frequency_stream=NPRStream(),
-        fusion=FeatureFusion(freq_dim=OUTPUT_DIM_RESNET_SHALLOW),
+        forensic_stream=NPRStream(),
+        fusion=FeatureFusion(forensic_dim=OUTPUT_DIM_RESNET_SHALLOW),
     )
 
 The backbone is swappable via the `backbone` flag, and the forensic frontend

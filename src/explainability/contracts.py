@@ -105,10 +105,9 @@ def _json_value(value: Any, field_name: str = "value") -> JsonValue:
 
 class Capability(str, Enum):
     PREDICTION = "prediction"
-    SEMANTIC_TARGET = "semantic_target"
-    NPR_TARGET = "npr_target"
+    ATTRIBUTION_TARGETS = "attribution_targets"
     ATTENTION_TENSORS = "attention_tensors"
-    PRE_NORMALIZATION_NPR_RESIDUALS = "pre_normalization_npr_residuals"
+    INTERMEDIATE_REPRESENTATIONS = "intermediate_representations"
     BRANCH_SUBSET_LOGITS = "branch_subset_logits"
 
 
@@ -211,6 +210,8 @@ class BranchCoalitionLogit:
 
     def __post_init__(self) -> None:
         _require_schema_version(self.schema_version)
+        if isinstance(self.branch_names, (str, bytes)):
+            raise TypeError("branch_names must be an iterable of strings")
         names = tuple(self.branch_names)
         for name in names:
             _require_non_empty(name, "branch_name")
@@ -404,7 +405,12 @@ class ExplanationOutputEnvelope:
 
 @runtime_checkable
 class ExplainabilityAdapter(Protocol):
-    """Architecture boundary for prediction and optional explanation inputs."""
+    """Architecture boundary for prediction and optional explanation inputs.
+
+    Capability payloads are keyed by canonical, adapter-defined branch names.
+    Generic explainability algorithms must not assume a particular forensic
+    frontend or branch topology.
+    """
 
     @property
     def capabilities(self) -> Mapping[Capability, CapabilityStatus]: ...
@@ -415,21 +421,21 @@ class ExplainabilityAdapter(Protocol):
         self, prepared_model_inputs: PreparedModelInputs
     ) -> AdapterPrediction: ...
 
-    def semantic_target(
+    def attribution_targets(
         self, prepared_model_inputs: PreparedModelInputs
-    ) -> CapabilityResult[AttributionTarget]: ...
-
-    def npr_target(
-        self, prepared_model_inputs: PreparedModelInputs
-    ) -> CapabilityResult[AttributionTarget]: ...
+    ) -> CapabilityResult[Mapping[str, AttributionTarget]]:
+        """Return one opaque attribution target per supported branch."""
+        ...
 
     def attention_tensors(
         self, prepared_model_inputs: PreparedModelInputs
     ) -> CapabilityResult[Sequence[object]]: ...
 
-    def pre_normalization_npr_residuals(
+    def intermediate_representations(
         self, prepared_model_inputs: PreparedModelInputs
-    ) -> CapabilityResult[object]: ...
+    ) -> CapabilityResult[Mapping[str, Mapping[str, object]]]:
+        """Return branch-keyed maps of named opaque intermediate values."""
+        ...
 
     def branch_subset_logits(
         self, prepared_model_inputs: PreparedModelInputs

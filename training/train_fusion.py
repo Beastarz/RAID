@@ -29,8 +29,8 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--config", default="configs/base_config.yaml")
     parser.add_argument("--augmentations-config", default="configs/augmentations.yaml")
     parser.add_argument("--semantic-checkpoint", default="checkpoints/semantic_stream.pt")
-    parser.add_argument("--frequency-checkpoint", default="checkpoints/bayar_srm_stream.pt")
-    parser.add_argument("--frequency-head", default="checkpoints/bayar_srm_head.pt")
+    parser.add_argument("--forensic-checkpoint", default="checkpoints/bayar_srm_stream.pt")
+    parser.add_argument("--forensic-head", default="checkpoints/bayar_srm_head.pt")
     parser.add_argument("--checkpoint-dir", default="checkpoints")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--steps", type=int, default=0, help="0 means all batches for each epoch")
@@ -51,13 +51,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     semantic_stream = SemanticStream(output_dim=semantic_cfg.get("output_dim", 1024), pretrained=False).to(device)
     npr_stream = NPRStream(backbone="resnet_shallow", frontend=BayarSRMFrontend()).to(device)
     _load_stream(args.semantic_checkpoint, semantic_stream, device)
-    _load_stream(args.frequency_checkpoint, npr_stream, device)
+    _load_stream(args.forensic_checkpoint, npr_stream, device)
     for stream in (semantic_stream, npr_stream):
         stream.eval()
         for parameter in stream.parameters():
             parameter.requires_grad = False
     fusion = FeatureFusion(semantic_dim=semantic_cfg.get("output_dim", 1024),
-                           freq_dim=OUTPUT_DIM_RESNET_SHALLOW, fused_dim=512).to(device)
+                           forensic_dim=OUTPUT_DIM_RESNET_SHALLOW, fused_dim=512).to(device)
     classifier = nn.Sequential(nn.Linear(512, 128), nn.GELU(), nn.Linear(128, 1)).to(device)
     trainable = list(fusion.parameters()) + list(classifier.parameters())
     optimizer = torch.optim.Adam(trainable, lr=args.lr or config["lr"])

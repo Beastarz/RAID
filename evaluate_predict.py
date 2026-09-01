@@ -1,4 +1,4 @@
-"""Evaluate the Bayar-aware predict path against a labeled manifest."""
+"""Evaluate the canonical bundled detector against a labeled manifest."""
 import argparse
 import csv
 from pathlib import Path
@@ -6,23 +6,21 @@ from pathlib import Path
 import torch
 from sklearn.metrics import accuracy_score, confusion_matrix, roc_auc_score
 
-from predict import BayarFusionModel, get_device, predict_single
+from predict import build_adapter, get_device, predict_single
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate predict.py on a labeled manifest")
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--checkpoint", default="checkpoints/detector_fusion.pt")
-    parser.add_argument("--semantic-checkpoint", default="checkpoints/semantic_stream.pt")
-    parser.add_argument("--bayar-checkpoint", default="checkpoints/bayar_srm_stream.pt")
+    parser.add_argument("--checkpoint", default="checkpoints/detector_bundle.pt")
     args = parser.parse_args()
 
     rows = list(csv.DictReader(Path(args.manifest).open(newline="", encoding="utf-8")))
     device = get_device()
-    model = BayarFusionModel(args.semantic_checkpoint, args.bayar_checkpoint, args.checkpoint, device)
+    model = build_adapter(args.checkpoint, device)
     truth, predicted, scores = [], [], []
     for row in rows:
-        result = predict_single(model, Path(row["image_path"]), device, bayar_mode=True)
+        result = predict_single(model, Path(row["image_path"]), device)
         label = int(row["label"])
         score = float(result["ai_probability"])
         truth.append(label)
