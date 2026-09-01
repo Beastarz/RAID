@@ -57,7 +57,7 @@ ai-image-detector/
 ├── requirements.txt # Dependencies
 ├── README.md # Setup and usage guide
 ├── ABOUT.md # Project writeup: motivation, learnings, what's next
-└── architecture.md # This file
+└── ARCHITECTURE.md # This file
 
 ---
 

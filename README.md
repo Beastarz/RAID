@@ -101,7 +101,7 @@ flowchart TD
 ```
 
 Full module ownership and data-flow diagrams for the current implementation
-live in [`architecture.md`](architecture.md); the shared
+live in [`ARCHITECTURE.md`](ARCHITECTURE.md); the shared
 tensor contracts and coding conventions the team held each other to are in
 [`.claude/CLAUDE.md`](.claude/CLAUDE.md); the fuller writeup of what we
 learned and why we made the calls we did is in [`ABOUT.md`](ABOUT.md).
@@ -311,7 +311,7 @@ architecture so nobody had to block on someone else's unfinished module:
   importer.
 - **Goh Jin Yu ([@Beastarz](https://github.com/Beastarz))** — Scaffolding,
   docs, and inference frontend: the original project blueprint/skeleton
-  (`architecture.md`, `.claude/CLAUDE.md`, `TODO.md`), the data loader and
+  (`ARCHITECTURE.md`, `.claude/CLAUDE.md`, `TODO.md`), the data loader and
   augmentation pipeline scaffolding, the Gradio demo (`app.py`), and this
   README.
 - **Shawn Wee ([@McFishhh](https://github.com/McFishhh))** — Forensic stream

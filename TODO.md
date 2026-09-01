@@ -2,7 +2,7 @@
 
 Tracks remaining work for the AI Image Detector project. See [`README.md`](README.md)
 for what's already done and [`.claude/CLAUDE.md`](.claude/CLAUDE.md) /
-[`architecture.md`](architecture.md) for the architecture contracts everything below must
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the architecture contracts everything below must
 follow.
 
 ## Done
