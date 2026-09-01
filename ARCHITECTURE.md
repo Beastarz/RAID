@@ -20,19 +20,28 @@ ai-image-detector/
 │ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (default forensic stream)
 │ │ ├── frontend_bayar.py # Swappable Bayar+SRM frontend for NPRStream (M3 fallback, see §4.B.3)
 │ │ ├── fusion.py # Cross-stream feature fusion layer
-│ │ └── detector.py # End-to-end PyTorch Lightning / PyTorch Module
+│ │ ├── detector.py # End-to-end PyTorch Lightning / PyTorch Module (stub-weight DetectorPipeline)
+│ │ ├── fused_detector.py # CanonicalFusedDetector: the real, jointly-scored semantic+forensic+fusion graph
+│ │ └── checkpoint_bundle.py # Self-describing bundle contract: builds/loads/validates detector_bundle.pt
 │ └── explainability/ # Team Member D: Diagnostic Tools (used by predict.py / app.py)
 │ ├── **init**.py
-│ ├── contracts.py # Versioned prediction/explanation record schemas
-│ ├── rendering.py # Heatmap normalization, colormaps, overlays
-│ ├── artifacts.py / serialization.py # PNG/NPY artifact storage, JSON serialization
-│ └── visualizer.py # Heatmap & attention map generation
+│ ├── contracts.py # Versioned prediction/explanation record schemas (Capability, AttributionTarget, ...)
+│ ├── adapters/detector_adapter.py # Explainability boundary for the published CanonicalFusedDetector bundle
+│ ├── gradcam.py # Model-independent Grad-CAM (forward/backward hooks + CAM math)
+│ ├── attribution.py # Vanilla gradients / Integrated Gradients
+│ ├── attention_rollout.py # Attention-rollout primitive (unsupported for this model, see §4.E)
+│ ├── branch_contributions.py # Coalition/ablation logit attribution across fused branches
+│ ├── faithfulness.py # Deletion/insertion faithfulness curves for a given heatmap
+│ ├── render.py # Heatmap normalization, colormaps, PNG rendering
+│ ├── serialization.py # JSON explanation envelopes, lossless NPY artifacts, JSONL I/O
+│ └── artifacts.py / rendering.py / visualizer.py # Legacy scaffolding for the stub DetectorPipeline, superseded by the above for the published bundle
 ├── training/ # Training pipeline — everything only the offline pipeline needs
 │ ├── **init**.py
 │ ├── train_semantic.py # Trains the semantic stream in isolation, saves a checkpoint
 │ ├── train_npr.py # Trains the NPR stream in isolation: real multi-epoch loop, own crop dataset
 │ ├── train_bayar_srm.py # Trains NPRStream with the Bayar+SRM frontend swapped in
 │ ├── train_fusion.py # Fuses two frozen, already-trained streams + trains the classification head
+│ ├── build_detector_bundle.py # Packages the 3 trained checkpoints into the self-describing detector_bundle.pt (parity-checked against an independent 3-file scorer)
 │ ├── test_npr.py / evaluate_npr.py # Evaluate a trained NPR checkpoint (held-out split / resize stress test)
 │ ├── evaluate_bayar_srm.py # Same, for the Bayar+SRM checkpoint
 │ ├── evaluate.py # Main evaluation CLI against benchmark transforms
@@ -51,7 +60,7 @@ ai-image-detector/
 │ ├── schemas.py # Versioned report/record schemas
 │ └── report.py # JSON-serializable report assembly
 ├── tests/ # Integration and unit tests
-├── predict.py # Inference pipeline: single-image / Batch prediction script (--bayar for the real fused model)
+├── predict.py # Inference pipeline: single-image / Batch prediction + explanation CLI (loads checkpoints/detector_bundle.pt)
 ├── evaluate_predict.py # Evaluates the checkpoint trio against a labeled manifest
 ├── app.py # Inference pipeline: Gradio frontend
 ├── requirements.txt # Dependencies
@@ -173,6 +182,16 @@ flowchart TD
 Entry points: `python predict.py --image <path> [--checkpoint <ckpt>]` and
 `python app.py` (Gradio server), both at the repo root.
 
+The diagram above is the stub `DetectorPipeline` path. In practice both entry
+points prefer `checkpoints/detector_bundle.pt` when present: `predict.py`/
+`app.py` load it through `src/models/checkpoint_bundle.py` into a
+`CanonicalFusedDetector` (`src/models/fused_detector.py`) instead of the
+random/stub-weight `DetectorPipeline`, and `VIZ` in the diagram becomes real
+Grad-CAM / faithfulness / attribution output via
+`src/explainability/adapters/detector_adapter.py` rather than a placeholder
+saliency map — see [§4.E](#e-explainability-module-srcexplainability) for
+that path in detail.
+
 The two pipelines share `src/models/` and the `[B, 3, H, W] -> {logit, prob, features}`
 contract. `training/data/` and `training/evaluation/` live entirely inside
 `training/` and are never imported by `predict.py` or `app.py`; `src/explainability/`
@@ -226,7 +245,7 @@ Key classes to implement:
 
 - _Purpose_: Reads the Neighboring Pixel Relationships (NPR) residual -- a fixed, parameter-free nearest-neighbour downsample-upsample round trip subtracted from the input -- which isolates the periodic local-correlation pattern every GAN/diffusion decoder's final upsampling stack leaves behind. Reference: Tan et al., CVPR 2024.
 - _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`).
-- The resize/downscale stress test (`training/evaluate_npr.py`) confirmed the fixed NPR operator collapses toward chance under aggressive rescaling, so the frontend swap point is exercised for real: `frontend_bayar.py`'s `BayarSRMFrontend` (a learnable Bayar constrained conv + fixed SRM filters) plugs into the identical interface as `NPRStream(frontend=BayarSRMFrontend())` -- this is what the published pretrained weights and `predict.py --bayar` use. `DetectorPipeline`'s default `forensic_stream` still uses plain `NPR`, since that default path is a shape-correct stub, not the trained model (see [Section 2](#2-pipeline-data-flow-training-vs-inference)).
+- The resize/downscale stress test (`training/evaluate_npr.py`) confirmed the fixed NPR operator collapses toward chance under aggressive rescaling, so the frontend swap point is exercised for real: `frontend_bayar.py`'s `BayarSRMFrontend` (a learnable Bayar constrained conv + fixed SRM filters) plugs into the identical interface as `NPRStream(frontend=BayarSRMFrontend())` -- this is what the published pretrained weights and the `detector_bundle.pt` bundle `predict.py`/`app.py` load use. `DetectorPipeline`'s default `forensic_stream` still uses plain `NPR`, since that default path is a shape-correct stub, not the trained model (see [Section 2](#2-pipeline-data-flow-training-vs-inference)).
 
 ### C. Fusion & Classification Head (`src/models/fusion.py` & `detector.py`)
 
@@ -255,10 +274,74 @@ Key tasks to implement:
 
 **Responsibility:** Provide diagnostic maps indicating which image patches or features triggered the classification score.
 
-Key tasks to implement:
+Unlike the other sections above, this one describes what was actually built,
+not just the original blueprint task list -- the module is real and wired to
+the published `CanonicalFusedDetector` bundle, not a placeholder.
 
-- `AttributionVisualizer`: Uses spatial gradient attribution (e.g., Grad-CAM) or cross-attention token weights to project importance scores back onto the original image space.
-- Saves diagnostic visual outputs overlaid on input images for error analysis.
+**Design: model-independent primitives + one adapter, not one bespoke
+implementation per model.** `src/explainability/` (`gradcam.py`,
+`attribution.py`, `attention_rollout.py`, `branch_contributions.py`,
+`faithfulness.py`) implements each attribution technique once, generically,
+against `nn.Module` hooks and plain tensors. `src/explainability/adapters/
+detector_adapter.py` is the single place that knows about the fused
+detector: it resolves the contract's named target paths (below) into actual
+submodules on `CanonicalFusedDetector`, prepares model inputs via
+`fused_detector.prepare_fused_inputs`, and returns results shaped to
+`contracts.py`'s schemas. `predict.py --explanation-method ...` and `app.py`'s
+explanation views both call through this one adapter -- neither talks to
+`gradcam.py`/`attribution.py` directly.
+
+**Supported explanation modes** (see `docs/final_model_contract.md` for the
+authoritative target-path list, which the bundle manifest also embeds):
+
+- **Semantic Grad-CAM** -- `gradcam.py` hooked at
+  `semantic_stream.backbone.encoder.layers.encoder_layer_11.ln_1`.
+  `detector_adapter.vit_token_grid` strips the CLS token and reshapes the
+  196 remaining patch tokens to a `14x14` grid before CAM math runs.
+- **Forensic Grad-CAM** -- hooked at `forensic_stream.backbone.4.2.conv3`,
+  producing a native `128x128` grid.
+- **Bayar+SRM fused intermediate** -- a non-class-conditioned dump of
+  activity at `frontend.bayar`, `frontend.srm`, `frontend.fuse`,
+  `backbone.4`, or `pool`; shows what the forensic frontend produced before
+  the backbone/classifier ever sees it.
+- **Semantic Integrated Gradients** (`attribution.py`) -- an explicit,
+  opt-in, more expensive alternative to Grad-CAM for the semantic branch.
+- **Deletion/insertion faithfulness** (`faithfulness.py`) -- given a named
+  heatmap (typically forensic Grad-CAM), progressively deletes/inserts the
+  highest-ranked raw-image patches and tracks the logit curve, as a sanity
+  check that the heatmap the model produced is actually load-bearing for its
+  own prediction.
+
+**Explicitly unsupported, and reported as such rather than faked**
+(`contracts.py`'s `CapabilityStatus` distinguishes "unsupported" from a
+computed result so `predict.py`/`app.py` never silently return a
+meaningless map):
+
+- **Attention rollout** (`attention_rollout.py`) -- the primitive exists and
+  is unit-tested, but is unsupported for this model because torchvision's
+  ViT forward path doesn't expose intermediate attention matrices to hook.
+- **Branch-coalition / feature-ablation logits** (`branch_contributions.py`)
+  -- the primitive exists, but is unsupported for the published bundle
+  because it doesn't embed a trained feature-ablation baseline; the code
+  deliberately refuses to substitute zeros as an implicit baseline, since
+  that would misrepresent a branch's contribution.
+
+**Output contract.** `render.py` turns a raw attribution tensor into a
+normalized, colormapped PNG at consistent display resolution (nearest-
+neighbor upscale for the semantic `14x14` grid so patch boundaries stay
+honest; bilinear for the forensic `128x128` grid). `serialization.py` writes
+the paired lossless `.npy` array and a versioned `explanation.json` envelope
+per `contracts.py`, recording native grid size, display size, interpolation,
+coordinate space, and the model/preprocessing identity the explanation was
+computed against -- so a saved explanation is never ambiguous about what
+produced it. Default output directory is `outputs/explanations/<sample-id>/`.
+
+**Bundle-level guarantee.** `src/models/checkpoint_bundle.py`'s
+`validate_explainability_contract` checks at bundle-build time
+(`training/build_detector_bundle.py`) that every target/intermediate path the
+contract declares actually resolves against the canonical module tree --
+explainability target paths can't silently go stale as the model code
+changes without the bundle build failing first.
 
 ---
 
