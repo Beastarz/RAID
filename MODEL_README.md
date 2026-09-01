@@ -93,28 +93,44 @@ git pull origin main
 hf download RAID-techjam/raid-detector-fusion --repo-type model --local-dir checkpoints
 ```
 
-Run prediction on an image:
+Build the self-describing canonical bundle and run prediction on an image:
 
 ```powershell
+python -m training.build_detector_bundle `
+  --semantic-checkpoint checkpoints/semantic_stream.pt `
+  --forensic-checkpoint checkpoints/bayar_srm_stream.pt `
+  --fusion-checkpoint checkpoints/detector_fusion.pt `
+  --output checkpoints/detector_bundle.pt `
+  --parity-image test_sample.jpg
 python predict.py `
   --image test_sample.jpg `
-  --bayar `
-  --checkpoint checkpoints/detector_fusion.pt `
-  --semantic-checkpoint checkpoints/semantic_stream.pt `
-  --bayar-checkpoint checkpoints/bayar_srm_stream.pt
+  --checkpoint checkpoints/detector_bundle.pt
 ```
 
 The command prints a JSON result containing the AI probability, label, and
-inference time. The `--bayar` flag is required because this checkpoint uses
-the Bayar+SRM low-level stream rather than the older FFT stream.
+inference time. Bundle creation validates strict topology, source hashes,
+embedded state integrity, and numerical parity with the independently loaded
+three-file scorer.
+
+Generate a supported explanation and strict artifact envelope with:
+
+```powershell
+python predict.py --image test_sample.jpg `
+  --explanation-method semantic-gradcam `
+  --output-directory outputs/explanations
+```
+
+Supported lightweight views are `semantic-gradcam`, `forensic-gradcam`, and
+`intermediates`. `attention` records the model's structured unsupported reason.
+Integrated Gradients and raw-image deletion/insertion faithfulness are expensive
+explicit opt-ins (`semantic-integrated-gradients` and
+`forensic-gradcam-faithfulness`) and are never run during default prediction.
 
 ## Important note
 
-`predict.py` defaults to the original semantic plus frequency-stream
-`DetectorPipeline`, which still runs on stub weights. Pass `--bayar` (as shown
-above) to route through the Bayar-aware fusion checkpoint instead — that flag
-and its `--semantic-checkpoint`/`--bayar-checkpoint` options are wired in and
-smoke-tested against the published weights.
+The canonical bundle is required for normal inference. The historical
+`DetectorPipeline` remains available only for legacy training experiments and is
+never used as a random-weight fallback.
 
 ## Reported experiment
 

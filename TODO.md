@@ -300,22 +300,22 @@ Suggested files: `src/explainability/branch_contributions.py` and
 
 ### Phase 6: Deletion/insertion faithfulness
 
-- [ ] Start this phase only after the final-model adapter exposes the canonical
+- [x] Start this phase only after the final-model adapter exposes the canonical
       deterministic raw-image scorer; it is no longer part of the model-free
       Wave 3 composition gate.
-- [ ] Implement deletion and insertion against a raw-image scoring callback,
+- [x] Implement deletion and insertion against a raw-image scoring callback,
       configurable patch size, perturbation count, baseline, and logit selector.
-- [ ] Perturb raw source images and regenerate every active branch input after
+- [x] Perturb raw source images and regenerate every active branch input after
       each step rather than perturbing one model-specific tensor.
-- [ ] Preserve the adapter-owned 512 resize/interpolation, semantic
+- [x] Preserve the adapter-owned 512 resize/interpolation, semantic
       normalization, forensic `[0,1]` conversion, and frontend transforms
       throughout every perturbation sequence.
-- [ ] Prefer blur or dataset-mean baselines and patch-level perturbations to
+- [x] Prefer blur or dataset-mean baselines and patch-level perturbations to
       avoid introducing synthetic forensic edges.
-- [ ] Report semantic, forensic (including any Bayar/SRM intermediate maps),
+- [x] Report semantic, forensic (including any Bayar/SRM intermediate maps),
       and combined-map faithfulness separately when those maps are available.
-- [ ] Save score curves as well as normalized deletion/insertion AUC values.
-- [ ] Acceptance: a patch-dependent toy classifier ranks a correct heatmap above
+- [x] Save score curves as well as normalized deletion/insertion AUC values.
+- [x] Acceptance: a patch-dependent toy classifier ranks a correct heatmap above
       a random heatmap.
 
 Suggested files: `src/explainability/faithfulness.py` and
@@ -356,59 +356,59 @@ explanations/<sample-id>/*.png
 
 ### Phase 8: Final-model adapter
 
-- [ ] After the canonical fused detector and checkpoint bundle pass their gate,
+- [x] After the canonical fused detector and checkpoint bundle pass their gate,
       add one isolated
       `src/explainability/adapters/detector_adapter.py` implementation.
-- [ ] Consume and strictly validate the self-describing checkpoint manifest:
+- [x] Consume and strictly validate the self-describing checkpoint manifest:
       `semantic` + `forensic` topology, Bayar+SRM/shallow-ResNet selection,
       feature dimensions, complete fused-detector state, shared 512 resize,
       normalization/pixel-range policies, decision threshold, identity, schema,
       and source hashes. Treat standalone files as provenance only.
-- [ ] Strictly load and validate the final checkpoint and record its identity and
+- [x] Strictly load and validate the final checkpoint and record its identity and
       preprocessing metadata in reports.
-- [ ] Construct branch-specific prepared inputs from each raw source image:
+- [x] Construct branch-specific prepared inputs from each raw source image:
       resize once to 512x512, then derive the normalized semantic tensor and raw
       `[0,1]` forensic tensor from the same resized pixels.
-- [ ] Expose the final AI logit plus named attribution targets and intermediate
+- [x] Expose the final AI logit plus named attribution targets and intermediate
       representations for each supported branch. For Bayar+SRM, expose Bayar,
       SRM, and fused frontend representations as forensic internals rather than
       pretending they are independent detector branches.
-- [ ] Preserve deterministic preparation context, including interpolation,
+- [x] Preserve deterministic preparation context, including interpolation,
       normalization, pixel range, original/resized dimensions, and forensic
       frontend transforms.
-- [ ] Expose complete branch coalitions only when the bundle records an explicit
+- [x] Expose complete branch coalitions only when the bundle records an explicit
       feature-ablation baseline, preferably calibration-set means; otherwise
       return a structured unsupported reason rather than silently using zeros.
-- [ ] Mark plain attention rollout unsupported for the current torchvision ViT
+- [x] Mark plain attention rollout unsupported for the current torchvision ViT
       because its forward path does not expose attention matrices. Do not invent
       attention tensors; expose supported semantic attribution and token-grid
       Grad-CAM targets instead.
-- [ ] Omit unsupported explanation methods with a structured reason instead of
+- [x] Omit unsupported explanation methods with a structured reason instead of
       inventing outputs.
-- [ ] Keep this adapter as the only module containing knowledge of final branch
+- [x] Keep this adapter as the only module containing knowledge of final branch
       names, layer paths, feature dimensions, and detector output structure.
 
 ### Phase 9: Application integration
 
-- [ ] Replace the provisional `predict.py`-local `BayarFusionModel` with the
+- [x] Replace the provisional `predict.py`-local `BayarFusionModel` with the
       canonical fused detector/adapter and remove the separate 256x256 forensic
       resize. Normal prediction must fail clearly when final weights are absent
       instead of silently returning random-weight predictions.
-- [ ] Replace `app.py`'s `_mock_saliency_overlay` with all adapter-supported
+- [x] Replace `app.py`'s `_mock_saliency_overlay` with all adapter-supported
       explanation views, including semantic attribution, forensic
       frontend/intermediate visualization, and branch Grad-CAM where available.
       Display attention rollout as unsupported for this model. Keep coordinate
       space and raw scale explicit for every forensic output.
-- [ ] Never overlay non-image-coordinate maps (for example forensic/frequency
+- [x] Never overlay non-image-coordinate maps (for example forensic/frequency
       planes) on the original image.
-- [ ] Add branch contributions and a raw JSON explanation component to Gradio.
-- [ ] Extend `predict.py` with explanation-method and output-directory options,
+- [x] Add branch contributions and a raw JSON explanation component to Gradio.
+- [x] Extend `predict.py` with explanation-method and output-directory options,
       including `--save_heatmap` compatibility.
-- [ ] Preserve the existing threshold slider, generator-based loading state,
+- [x] Preserve the existing threshold slider, generator-based loading state,
       label-confidence behavior, and CSS during Gradio integration.
-- [ ] Keep expensive Integrated Gradients and deletion/insertion disabled by
+- [x] Keep expensive Integrated Gradients and deletion/insertion disabled by
       default and expose them as explicit opt-in analyses.
-- [ ] Keep dataset-level ROC/PR, confusion, calibration, and robustness reports
+- [x] Keep dataset-level ROC/PR, confusion, calibration, and robustness reports
       separate from per-image explanations.
 
 ### Execution workflow
@@ -567,17 +567,49 @@ Wave 3 implementation handoff and parent review:
 - [x] Accept the published final topology as ViT-B/16 semantic plus one
       Bayar+SRM/shallow-ResNet forensic branch; NPR and the FFT frequency stream
       are not active final branches.
-- [ ] Implement and validate the canonical fused detector with raw-logit output
+- [x] Implement and validate the canonical fused detector with raw-logit output
       and one deterministic 512x512 resize feeding both branch-specific tensor
       views. Remove the provisional separate 256 forensic resize; do not add
       native-crop/top-k behavior without retraining the fused checkpoint.
-- [ ] Produce a self-describing checkpoint bundle from the published semantic,
+- [x] Produce a self-describing checkpoint bundle from the published semantic,
       Bayar+SRM, and fusion/classifier files. Verify strict loading, source
       hashes, deterministic preparation, threshold `0.5`, and numerical parity
       with the three-file scorer before exposing any explanation target.
-- [ ] Record the final branch names, internal representations, preprocessing,
+- [x] Record the final branch names, internal representations, preprocessing,
       target layers, and unsupported capabilities as the input contract for
       Wave 4.
+
+Wave 3.5 correction handoff:
+
+- Canonical preparation now performs one Pillow bilinear 512x512 resize and
+  derives both branch tensors from those shared pixels; the active CLI, app, and
+  evaluation paths no longer use a separate 256x256 forensic resize or random
+  fallback model.
+- Bundle manifests bind source provenance to a derived `weights_id` and bind
+  embedded values to a deterministic state digest. Loading validates both,
+  resolves every declared explainability target, honors the requested device,
+  and performs strict state loading.
+- `training.build_detector_bundle --parity-image` compares the saved detector's
+  score with an independently loaded three-file scorer before writing the bundle.
+  The published checkpoint smoke test reproduces probability `0.4053786` on
+  `test_sample.jpg`.
+- Focused final-model suite: `40 passed, 1 skipped`; compileall and
+  `git diff --check` pass. Full-suite attempts still encounter the existing
+  Windows pytest temporary-directory ACL failure outside the code under test.
+
+Wave 3.5 acceptance recheck (2026-09-01):
+
+- Regenerated both `checkpoints/detector_bundle.pt` and the historical
+  `checkpoints/detector_bundle_wave35.pt` from the three published source
+  checkpoints with `--parity-image test_sample.jpg`.
+- Both bundles now strict-load with source-hash validation and resolve the
+  semantic and forensic attribution targets. Independent three-file parity is
+  exact at logit `-0.38310351967811584` (probability `0.4053786098957062`),
+  with threshold `0.5`; repeated canonical preparation is bitwise deterministic.
+- The default `predict.py --image test_sample.jpg` path and app now load the
+  validated bundle. Focused recheck: `22 passed, 1 skipped`; compileall and
+  `git diff --check` pass. The full suite remains externally limited by the
+  existing Windows pytest temporary-directory ACL failure.
 
 Post-merge model audit:
 
@@ -585,37 +617,73 @@ Post-merge model audit:
   `detector_fusion.pt` contains only `fusion` and `classifier`; no file records
   topology, preprocessing, threshold, identity, or schema metadata.
 - Fusion training used normalized 512x512 tensors and derived forensic
-  `[0,1]` tensors by denormalization. Current app/CLI inference instead resizes
-  the forensic input separately to 256x256 and must be corrected.
+  `[0,1]` tensors by denormalization. The historical app/CLI path used a
+  separate 256x256 forensic resize; the active paths now use the shared 512x512
+  contract.
 - On `test_sample.jpg`, the published weights produced `0.4153479` with the
   provisional 256 forensic resize and `0.4053786` with the 512 fused-training
   contract, confirming that the mismatch is behaviorally material.
 
-#### Wave 4: Final-model adapter (sequential, blocked on Wave 3.5 bundle gate)
+#### Wave 4: Final-model adapter (sequential)
 
-- [ ] Confirm the canonical detector and self-describing bundle reproduce the
+- [x] Confirm the canonical detector and self-describing bundle reproduce the
       published checkpoint before assigning Phase 8.
-- [ ] Assign one Luna increment to the architecture adapter; keep branch-specific
+- [x] Assign one Luna increment to the architecture adapter; keep branch-specific
       preprocessing, target selection, branch ablation, and
       checkpoint validation together.
-- [ ] Sol review gate: validate explanations against a real checkpoint and
+- [x] Sol review gate: validate explanations against a real checkpoint and
       deterministic samples, including unsupported-capability behavior.
-- [ ] Implement and review deletion/insertion faithfulness against the accepted
+- [x] Implement and review deletion/insertion faithfulness against the accepted
       adapter's raw-image scorer, then run toy-ranking and real-checkpoint smoke
       tests.
 
+Wave 4 implementation handoff and parent review:
+
+- Added the strict final-model adapter with canonical raw-image preparation,
+  prediction metadata, semantic/forensic Grad-CAM targets, ViT token reshaping,
+  declared intermediate capture, and structured unsupported capabilities.
+- Added raw-image deletion/insertion curves with blur, dataset-mean, or explicit
+  baselines, deterministic patch ordering, normalized AUCs, and independent
+  named-map evaluation.
+- Parent real-checkpoint review reproduced probability `0.4053786098957062`,
+  produced finite nonzero semantic and forensic Grad-CAM maps with no leaked
+  hooks, captured every declared intermediate, and ran a real raw-image
+  faithfulness smoke. Focused gates: `46 passed, 2 skipped` for the adapter and
+  `28 passed, 2 skipped` for faithfulness; compileall and `git diff --check`
+  pass.
+
 #### Wave 5: Product integration (sequential)
 
-- [ ] Migrate `predict.py` from its provisional model wrapper to the accepted
+- [x] Migrate `predict.py` from its provisional model wrapper to the accepted
       detector/adapter and complete its Sol review first.
-- [ ] Migrate `app.py`, remove the placeholder saliency map and random-weight
+- [x] Migrate `app.py`, remove the placeholder saliency map and random-weight
       normal-operation fallback, and add supported explanation views only after
       the CLI path is accepted.
-- [ ] Add integration documentation and end-to-end tests last.
-- [ ] Route required shared-adapter changes through a separate reviewed Luna
+- [x] Add integration documentation and end-to-end tests last.
+- [x] Route required shared-adapter changes through a separate reviewed Luna
       correction rather than changing the adapter incidentally in product work.
-- [ ] Parent review gate: run CLI, Gradio prediction function, focused tests, and
+- [x] Parent review gate: run CLI, Gradio prediction function, focused tests, and
       the complete test suite before marking explainability integration complete.
+
+Wave 5 implementation handoff and parent review:
+
+- `predict.py` now uses the accepted adapter, has no provisional three-file
+  wrapper, and emits deterministic strict explanation envelopes plus standalone
+  PNG/NPY artifacts for semantic/forensic Grad-CAM and declared intermediates.
+  Attention is structured unsupported; `--save_heatmap` remains compatible.
+- Integrated Gradients and raw-image faithfulness are explicit CLI opt-ins and
+  remain disabled during default inference. Faithfulness records both score
+  curves and normalized AUCs.
+- Gradio now shows real semantic/forensic Grad-CAM or the Bayar+SRM fused
+  intermediate as standalone non-overlay views, preserves the threshold/loading
+  flow and label CSS, and includes raw JSON with identity, preparation context,
+  coordinate space, raw scale, and structured unsupported branch contributions.
+- Parent real-checkpoint review reproduced `0.405379` through CLI and Gradio,
+  exercised every UI view, built the Gradio `Blocks` interface, and validated
+  lightweight and expensive CLI artifact envelopes. Integrated focused gate:
+  `26 passed, 1 skipped`; compileall and `git diff --check` pass. The complete
+  suite reached `198 passed, 4 skipped`; its remaining 39 setup errors are all
+  the pre-existing Windows pytest temporary-directory ACL failure.
 
 ### Parent orchestration protocol
 
