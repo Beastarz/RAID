@@ -1,190 +1,164 @@
-# RAID - Robust AI-generated Image Detector
+# RAID — Robust AI-generated Image Detector
 
-Modular dual-stream framework for robust AI-generated image detection, designed to
-stay accurate under real-world post-processing (JPEG compression, blur, rescaling,
-noise, color jitter, and cropping).
+Catch AI fakes before they slip past you. RAID is a modular, dual-stream
+framework for detecting AI-generated images that stays accurate under
+real-world post-processing (JPEG re-compression, blur, rescaling, noise,
+color jitter, and cropping) — the kind of degradation a photo actually goes
+through before it reaches someone in a group chat.
 
-The architecture combines two feature-extraction streams — a high-level **semantic**
-stream (ViT / DINOv2) and a low-level **forensic** stream (Neighboring Pixel
-Relationships (NPR) residual + a shallow ResNet/ConvNeXt-Tiny backbone, both
-swappable) — fused via a cross-attention layer feeding a classification head. The
-forensic stream started as an FFT-based "frequency" stream; `src/models/npr_stream.py`
-now supersedes it (see Status below). Full architecture and module ownership are
-documented in [`BLUEPRINT.md`](BLUEPRINT.md) and [`.claude/CLAUDE.md`](.claude/CLAUDE.md).
+## Overview
 
-## Status
+AI-generated imagery has gotten good enough that the people most exposed to
+AI scam ads, fake product photos, and fabricated "news" images — often the
+least equipped to question them — can no longer just eyeball a photo and
+tell. RAID aims to sit between an image and a person and give a straight
+answer: *this was probably made by AI*, with a probability and (eventually)
+a visual explanation of why.
 
-The project is transitioning out of the **scaffolding / stub phase**: the semantic
-stream now wraps a real backbone, while the frequency stream and fusion layer are
-still stubs. This lets the data, evaluation, and explainability workstreams develop
-in parallel against a stable interface while the remaining heavy models land.
+The architecture combines two independent feature-extraction streams behind
+a shared `BaseFeatureStream` interface:
 
-**Implemented so far:**
+- **Semantic stream** — a ViT-B/16 backbone (optionally with the last few
+  transformer blocks fine-tuned) that reasons about high-level content,
+  composition, and semantic irrelevancies (impossible anatomy, warped text,
+  inconsistent lighting).
+- **Forensic stream** — reads low-level generation artifacts that survive
+  resizing and re-compression. The active implementation is **NPR**
+  (Neighboring Pixel Relationships): a fixed, parameter-free
+  downsample/upsample residual that isolates the periodic pattern every
+  GAN/diffusion decoder's upsampling stack leaves behind (Tan et al., CVPR
+  2024). A swappable Bayar constrained-conv + SRM-filter frontend was also
+  built behind the same interface as an alternative, and is what the
+  currently published pretrained weights use.
 
-- `src/models/base_stream.py` — abstract `BaseFeatureStream` interface shared by
-  both extraction streams.
-- `src/models/semantic_stream.py` — `SemanticStream` wraps torchvision's ViT-B/16,
-  producing `[B, 1024]` features via a linear projection off the 768-dim backbone
-  output. Controlled by `configs/model_config.yaml`'s `semantic` block:
-  `pretrained` (download ImageNet weights vs. random init), `freeze_backbone`,
-  and `unfreeze_last_n_blocks` (partial fine-tuning of the last N encoder blocks
-  + final LayerNorm while the rest stays frozen). Exposes
-  `parameter_counts()` (`total`/`trainable`/`frozen`) for logging, and keeps the
-  frozen backbone in `eval()` mode even when the wrapping module is in `train()`.
-- `src/models/npr_stream.py` — `NPRStream`, the low-level forensic stream (replaces
-  `frequency_stream.py`, which remains in the tree but is superseded and no longer
-  part of the active architecture). Computes the fixed, parameter-free NPR residual
-  (a nearest-neighbour downsample-upsample round trip subtracted from the input,
-  isolating the periodic artifact every GAN/diffusion decoder's upsampling stack
-  leaves behind), rescales it with `BatchNorm2d`, and reads it with a backbone —
-  producing `[B, 256]` features by default (truncated ResNet-50 stem+layer1) or
-  `[B, 768]` with the `convnext_tiny` ablation. Both the backbone and the residual
-  frontend itself are swappable via constructor args (`backbone=`, `frontend=`), the
-  latter specifically so a future Bayar+SRM frontend can drop in with no other code
-  changes if the resize-robustness stress test calls for it. Unlike the other two
-  streams, its input contract is raw `[0, 1]` pixels at a native-resolution crop,
-  never resized — see `training/train_npr.py`.
-- `src/models/fusion.py` — `FeatureFusion`: concatenates both streams and projects
-  to a fused `[B, 512]` vector. Marked for a future cross-attention upgrade. Its
-  `freq_dim` constructor arg defaults to 768 (the old FrequencyStream's output) —
-  pass `freq_dim=256` (or `NPRStream.output_dim`) when pairing it with NPR's default
-  backbone.
-- `src/models/detector.py` — `DetectorPipeline`: wraps both streams, fusion, and a
-  2-layer MLP head; `forward()` returns `{"logit", "prob", "features"}` per the
-  project's data contract.
-- `predict.py` — CLI for single-image or directory inference. Standardizes input to
-  `[1, 3, 512, 512]` (ImageNet-normalized), runs the pipeline, and prints one JSON
-  result per image (`filename`, `ai_probability`, `label`, `execution_time_ms`).
-- `app.py` — Gradio frontend: image upload, Run button, prediction label, a
-  P(AI-Generated) percentage slider, and a placeholder saliency heatmap overlay
-  (to be replaced by the real Grad-CAM / attention visualizer).
-- `training/data/augmentations.py` — `RobustnessTransforms` is a real,
-  fully-implemented Albumentations pipeline (JPEG compression, Gaussian blur,
-  downscale rescaling, Gaussian noise, color jitter, 80% center crop), with a
-  train mode (stochastic stack) and an eval mode (one isolated transform at a
-  fixed severity, for degradation curves).
-- `training/data/dataset.py` / `datamodule.py` — `AIGCDataset` reads a real
-  manifest CSV when `configs/base_config.yaml`'s `data.manifest_path` is set,
-  else falls back to an in-memory synthetic dataset; `AIGCDataModule` wraps it
-  into train/val `DataLoader`s.
-- `training/data/import_hf.py` — CLI that streams an image classification
-  dataset from the Hugging Face Hub (default `RAID-techjam/SID_Set`) without
-  downloading it in full, exports up to `--limit` samples as local JPEGs, and
-  writes a `manifest.csv` compatible with `AIGCDataset`. Infers the image/label
-  columns (overridable via `--image-column`/`--label-column`) and remaps
-  `SID_Set`'s three-way label (`0=real, 1=fully synthetic, 2=tampered`) onto
-  this project's binary contract (`0=Real`, `1=AI-Generated`).
-- `training/data/shuffle_manifest.py` — shuffles a manifest's rows (seeded) before
-  training reads it, since `AIGCDataModule` splits train/val by a contiguous index
-  range rather than a shuffled one.
-- `training/train_semantic.py` — real, runnable training loop for the semantic
-  stream: config → datamodule → `SemanticProbe` (`SemanticStream` + a linear
-  head) → multi-epoch (`--epochs`) forward/BCE-loss/backward/optimizer loop,
-  capped by `--steps` total optimizer steps, with a validation pass
-  (loss + accuracy) logged after each epoch → saves
-  `checkpoints/semantic_stream.pt`. Stream config (`pretrained`,
-  `freeze_backbone`, `unfreeze_last_n_blocks`, `output_dim`) comes from
-  `configs/base_config.yaml`'s `semantic` block.
-- `training/train_npr.py` — unlike the semantic script above, this is a **real**
-  (not mock) short training loop for the NPR stream: a train/val split, AdamW +
-  cosine LR schedule, a class-imbalance-aware BCE loss, and per-epoch val
-  loss/accuracy/AUC, checkpointing only when val AUC improves. Owns its own
-  crop-only dataset (native-resolution random crops, raw `[0, 1]` pixels) rather
-  than reusing `AIGCDataset`, since NPR's input contract can't share a resize step
-  with the semantic stream. Saves `checkpoints/npr_stream.pt` (the backbone, same
-  convention as `semantic_stream.pt` for a future `DetectorPipeline` fine-tune)
-  and `checkpoints/npr_head.pt` (the classifier head) separately.
-- `training/test_npr.py` — evaluates a trained NPR checkpoint (both files above)
-  on the exact same held-out val split `train_npr.py` used, reporting loss,
-  accuracy, and AUC.
-- `training/evaluate.py` — a light mock sweep through the eval-mode
-  `RobustnessTransforms`, logging shapes/probabilities per severity level; real
-  metric computation (`training/evaluation/`) isn't implemented yet.
-- `training/logging_utils.py` — shared logger setup; the data/training path
-  logs dataset/datamodule sizes at INFO and per-sample augmentation params at
-  DEBUG, for tracing data flow and debugging.
+Both streams feed a fusion layer and a compact classification head, capped
+under a **2B parameter budget** (target ~337M) so the whole pipeline stays
+fast enough for hackathon-scale, single-GPU iteration.
 
-**Not yet implemented:** joint fine-tuning of the fused `DetectorPipeline` (and loading the per-stream
-checkpoints into it for evaluation), a real (non-`import_hf.py`-subset) image
-dataset for full training runs, the robustness metrics/benchmark suite
-(`training/evaluation/metrics.py`, `robustness_suite.py`), and the real
-explainability visualizer (`src/explainability/`) — these currently exist only
-as empty module stubs or mocks.
+### Architecture
 
-The semantic stream can now be trained meaningfully (real ViT-B/16 backbone +
-real data via `import_hf.py`), but end-to-end predictions through
-`DetectorPipeline` are **still not meaningful** until the frequency stream and
-fusion layer get real backbones and the streams are jointly fine-tuned.
+This is the original blueprint design the project was scaffolded from (backbone
+names/params are the initial targets — see the stream bullets above and
+[Limitations](#limitations--what-wed-improve-with-more-time) for what the
+active implementation actually uses):
 
+```mermaid
+flowchart TD
+    A[Input Image] --> B{Mode}
+    B -->|Training| C[Robustness Augmentation Engine]
+    C -->|"JPEG, Blur, Rescale, Noise, Jitter, Crop"| D
+    B -->|Inference| D
 
-## Project Structure
+    subgraph PRE[Preprocessing]
+        D[Standardization Preprocessor]
+    end
 
-The repo separates two independent pipelines that both build on `src/`:
+    D -->|512x512 Standard Tensor| E[Dual-Stream Feature Extractor]
 
-- **Training pipeline** (`training/`) — offline: `training/train_semantic.py`
-  reads `training/data/` (`AIGCDataset`/`RobustnessTransforms`); `training/train_npr.py`
-  owns its own crop-only dataset instead (see Status above) since NPR's input
-  contract can't share that resize step. Each fits its own stream and writes its
-  own checkpoint, independently of the other; `training/test_npr.py` evaluates
-  NPR's checkpoint standalone, and `training/evaluate.py` benchmarks the fused
-  `DetectorPipeline` with `training/evaluation/`. Run as modules from the repo
-  root, e.g. `python -m training.train_semantic --config configs/base_config.yaml`.
-  `training/data/` and `training/evaluation/` are training-only.
-- **Inference pipeline** (`predict.py`, `app.py`) — online: loads a checkpoint into
-  `DetectorPipeline` and serves predictions via CLI or the Gradio app, using
-  `src/explainability/` for saliency heatmaps. Never imports `training/`.
+    subgraph EXTRACT[Dual-Stream Feature Extraction]
+        E --> F
+        E --> G
+        subgraph S1[Stream 1 — Semantic]
+            F[High-Level Foundation Backbone] -->|DINOv2-Large / 304M Params| H[Global Token & ViT Patch Embeddings]
+        end
+        subgraph S2[Stream 2 — Frequency]
+            G[Mid-Level Frequency Stream] --> I[2D FFT Mid-Band Pass Masking]
+            I --> J[ConvNeXt-Tiny Backbone / 28M Params]
+            J --> K[Mid-Frequency Feature Map]
+        end
+    end
 
-See [`BLUEPRINT.md`](BLUEPRINT.md) for the full directory map, the data-flow
-diagrams for each pipeline, and the tensor contracts.
+    subgraph FUSE[Fusion & Output]
+        H --> L[Cross-Attention Feature Fusion Layer]
+        K --> L
+        L --> M[Fused Representation Vector]
+        M --> N[Classification Head: MLP Layer]
+        M --> O[Explainability Head: Grad-CAM / ViT Attention Map]
+        N --> P[Prediction: Probability AI-Generated vs Authentic]
+        O --> Q[Diagnostic Heatmap: Spatial Artifact Localization]
+    end
 
-## Setup & Test Guide
+    classDef input fill:#e0e7ff,stroke:#4338ca,stroke-width:1px,color:#1e1b4b;
+    classDef mode fill:#ffffff,stroke:#db2777,stroke-width:1.5px,color:#1e1b4b;
+    classDef pre fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef stream1 fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef stream2 fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+    classDef fuse fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
 
-### 1. Prerequisites
+    class A input;
+    class B mode;
+    class C,D pre;
+    class E pre;
+    class F,H stream1;
+    class G,I,J,K stream2;
+    class L,M,N,O,P,Q fuse;
 
-- Python 3.10+
-- (Optional) an NVIDIA GPU with CUDA for faster inference — the pipeline runs fine
-  on CPU too.
-
-### 2. Clone and enter the repo
-
-```bash
-git clone <repo-url>
-cd ai-image-detector
+    style PRE fill:#f5f3ff,stroke:#a78bfa,stroke-width:1px,color:#4c1d95
+    style EXTRACT fill:#f8fafc,stroke:#94a3b8,stroke-width:1px,color:#334155
+    style S1 fill:#eff6ff,stroke:#60a5fa,stroke-width:1px,color:#1e3a5f
+    style S2 fill:#fdf4ff,stroke:#e879f9,stroke-width:1px,color:#4a044e
+    style FUSE fill:#ecfdf5,stroke:#34d399,stroke-width:1px,color:#064e3b
 ```
 
-### 3. Create and activate a virtual environment
+Full module ownership and data-flow diagrams for the current implementation
+live in [`ARCHITECTURE.md`](ARCHITECTURE.md); the shared
+tensor contracts and coding conventions the team held each other to are in
+[`.claude/CLAUDE.md`](.claude/CLAUDE.md); the fuller writeup of what we
+learned and why we made the calls we did is in [`ABOUT.md`](ABOUT.md).
+
+**Status:** the semantic and forensic (NPR / Bayar+SRM) streams both train
+and evaluate meaningfully on their own. A real, jointly-trained pipeline —
+semantic + Bayar+SRM + fusion — is published as a self-describing checkpoint
+bundle and gives meaningful predictions today via `predict.py` (see
+[Reproducing our results](#reproducing-our-results) below), including real
+Grad-CAM and forensic-intermediate explanations — see
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for how that's wired up. The default
+`DetectorPipeline` (semantic + a plain NPR forensic stream, no bundle) still
+runs on stub weights for the forensic stream and fusion layer, so its raw
+predictions aren't meaningful — it remains only for standalone stream
+research, not as an inference entry point.
+
+## Setup and Installation
+
+**Prerequisites:** Python 3.10+. An NVIDIA GPU with CUDA speeds up both
+training and inference, but everything also runs on CPU.
 
 ```bash
+git clone https://github.com/RAID-techjam/RAID.git
+cd RAID
+
 python -m venv .venv
 ```
 
-macOS/Linux:
+Activate the virtual environment:
 
 ```bash
+# macOS/Linux
 source .venv/bin/activate
-```
 
-Windows (PowerShell):
-
-```powershell
+# Windows (PowerShell)
 .venv\Scripts\Activate.ps1
 ```
 
-### 4. Install dependencies
+Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Includes `datasets` (Hugging Face) for `training/data/import_hf.py`. Set
+This installs PyTorch/torchvision, Albumentations, `timm`-adjacent vision
+tooling, Gradio (the demo frontend), scikit-learn (evaluation metrics), and
+`datasets` (for streaming training data from the Hugging Face Hub). Set
 `configs/base_config.yaml`'s `semantic.pretrained: true` to download
 torchvision's ImageNet-pretrained ViT-B/16 weights on first run; the default
 (`false`) keeps everything offline for smoke tests.
 
-### 5. Verify the tensor contracts
+## Reproducing Our Results
 
-Confirms Stream 1, Stream 2, Fusion, and the Detector output all match the shapes
-defined in `CLAUDE.md`:
+### 1. Verify the tensor contracts
+
+Sanity-checks that Stream 1, Stream 2, Fusion, and the Detector output all
+match the shapes defined in `.claude/CLAUDE.md`:
 
 ```bash
 python -c "
@@ -200,102 +174,185 @@ print('Tensor contracts OK:', {k: tuple(v.shape) for k, v in out.items()})
 "
 ```
 
-### 6. Run inference on a single image
+### 2. Run inference with our pretrained (real) weights
 
-A synthetic test image (`test_sample.jpg`) is included at the repo root for a quick
-smoke test:
-
-```bash
-python predict.py --image test_sample.jpg
-```
-
-Expected output — one JSON line, e.g.:
-
-```json
-{
-  "filename": "test_sample.jpg",
-  "ai_probability": 0.49,
-  "label": "Authentic",
-  "execution_time_ms": 8.7
-}
-```
-
-You can also point `--image` at a directory to run batch inference (one JSON line
-per image):
+The meaningful, jointly-trained pipeline — semantic (ViT-B/16) + Bayar+SRM
+forensic stream + fusion — is published on the Hugging Face Hub as
+`RAID-techjam/raid-detector-fusion`. Download the three source checkpoints,
+then build the self-describing bundle `predict.py`/`app.py` actually load
+(this also runs an independent parity check against the three-file scorer):
 
 ```bash
-python predict.py --image test_data
+pip install huggingface_hub
+hf download RAID-techjam/raid-detector-fusion --repo-type model --local-dir checkpoints
+
+python -m training.build_detector_bundle \
+  --semantic-checkpoint checkpoints/semantic_stream.pt \
+  --forensic-checkpoint checkpoints/bayar_srm_stream.pt \
+  --fusion-checkpoint checkpoints/detector_fusion.pt \
+  --output checkpoints/detector_bundle.pt \
+  --parity-image test_sample.jpg
+
+python predict.py --image test_sample.jpg --checkpoint checkpoints/detector_bundle.pt
 ```
 
-Pass `--checkpoint path/to/model.ckpt` once a trained checkpoint exists; without it,
-the model runs with randomly initialized stub weights.
+This prints one JSON line with the AI-generated probability, label, and
+inference time. `--image` also accepts a directory for batch inference (one
+JSON line per image). Add `--explanation-method semantic-gradcam` (or
+`forensic-gradcam`, `intermediates`) to also write a Grad-CAM/forensic
+explanation envelope — see [`ARCHITECTURE.md`](ARCHITECTURE.md) for what each
+mode actually shows.
 
-### 7. Launch the frontend
+You can also evaluate this bundle against a labeled manifest
+(`image_path,label` CSV) to get accuracy, a confusion matrix, and AUC:
+
+```bash
+python evaluate_predict.py --manifest path/to/manifest.csv \
+  --checkpoint checkpoints/detector_bundle.pt
+```
+
+**Reported numbers:** on a 10,000-image `SID_Set` subset, the Bayar+SRM
+model reached ~0.8738 clean validation AUC. Resize robustness improved after
+training with resize augmentation, reaching ~0.8459 AUC at 0.5x scale, while
+more aggressive 0.25x–0.35x scale conditions remained challenging. The NPR
+stream alone (evaluated independently, not yet fused) reached ~0.91 val AUC
+on its own held-out split. Treat all of these as hackathon-scale, not
+production-grade, numbers — see [Limitations](#limitations--what-wed-improve-with-more-time).
+
+### 3. Launch the demo app
 
 ```bash
 python app.py
 ```
 
-This starts a local Gradio server (URL printed in the console). Upload a `.jpg`,
-`.png`, or `.webp` image and click **Run** to see the predicted label, the
-P(AI-Generated) percentage, and a placeholder saliency overlay.
+Starts a local Gradio server. Upload a `.jpg`/`.png`/`.webp` image, pick a
+decision threshold and an explanation view, and click **Run** to see the
+predicted label, the P(AI-Generated) percentage, and a real semantic
+Grad-CAM / forensic Grad-CAM / Bayar+SRM intermediate visualization. `app.py`
+auto-detects `checkpoints/detector_bundle.pt` (step 2) and falls back to the
+stub `DetectorPipeline` otherwise — a status line under the title always
+states which one is active.
 
-### 8. Run the test suite
+### 4. Run the test suite
 
 ```bash
 pytest tests/
 ```
 
-`tests/test_data.py` covers the augmentation shape contract, the dataset
-label/shape contract, and a smoke test per stream-training script (including
-that it writes its checkpoint file). `test_models.py` covers `SemanticStream`'s
-output contract, non-RGB input rejection, freeze/unfreeze-last-N-blocks
-behavior, `parameter_counts()` consistency, and `DetectorPipeline`'s output
-contract. `test_evaluation.py` is still an empty stub.
+### 5. (Optional) Train the pipeline from scratch
 
-### 9. (Optional) Import a real training subset
+Pull a real labeled subset from the Hugging Face Hub without downloading it
+in full, then shuffle it into train/val order:
 
 ```bash
-python -m training.data.import_hf --dataset RAID-techjam/SID_Set --split train --limit 100 --output data/sid_subset
+python -m training.data.import_hf --dataset RAID-techjam/SID_Set --split train --limit 10000 --output data/sid_subset
+python -m training.data.shuffle_manifest --input data/sid_subset/manifest.csv --output data/sid_subset/manifest.csv
 ```
 
-Streams samples from a Hugging Face dataset (no full download), exports them
-as JPEGs, and writes `data/sid_subset/manifest.csv`. Point
-`configs/base_config.yaml`'s `data.manifest_path` at that CSV to train against
-real images instead of the synthetic fallback.
-
-
-### 10. Run the training pipeline
+Point `configs/base_config.yaml`'s `data.manifest_path` at the resulting
+manifest, then train each stream independently:
 
 ```bash
-# Semantic stream: still a mock loop (fixed step count, stub backbone)
-python -m training.train_semantic --config configs/base_config.yaml --epochs 2 --steps 200 --log-level DEBUG
-python -m training.train_frequency --config configs/base_config.yaml --steps 2 --log-level DEBUG
+# Semantic stream (ViT-B/16 + linear head)
+python -m training.train_semantic --config configs/base_config.yaml
 
-# NPR stream: a real training loop (5 epochs by default)
-python -m training.train_npr --config configs/base_config.yaml --log-level INFO
-python -m training.test_npr --config configs/base_config.yaml
+# Forensic stream — pick one:
+python -m training.train_npr --config configs/base_config.yaml        # NPR (parameter-free residual)
+python -m training.train_bayar_srm --config configs/base_config_bayar.yaml  # Bayar+SRM (what the published weights use)
 
-# Evaluation:
-python -m training.evaluate --config configs/augmentations.yaml
+# Fuse the two frozen streams + train the classification head
+python -m training.train_fusion --config configs/base_config.yaml \
+  --semantic-checkpoint checkpoints/semantic_stream.pt \
+  --forensic-checkpoint checkpoints/bayar_srm_stream.pt
+
+# Package the three checkpoints into the self-describing bundle predict.py/app.py load
+python -m training.build_detector_bundle \
+  --semantic-checkpoint checkpoints/semantic_stream.pt \
+  --forensic-checkpoint checkpoints/bayar_srm_stream.pt \
+  --fusion-checkpoint checkpoints/detector_fusion.pt \
+  --output checkpoints/detector_bundle.pt \
+  --parity-image test_sample.jpg
 ```
 
-All of these run against the synthetic in-memory dataset by default (no real
-dataset needed) and log the data flow at each stage — DEBUG level shows which
-augmentations fired per sample. Point `configs/base_config.yaml`'s
-`data.manifest_path` at a manifest produced by `training/data/import_hf.py` +
-`shuffle_manifest.py` to train on real data instead — every script here falls
-back to synthetic automatically if that path doesn't exist yet. `train_npr.py`/`test_npr.py` 
-do, once pointed at real data.
-`train_semantic.py` runs a real multi-epoch
-loop (validation loss/accuracy logged after each epoch) capped by
-`--steps` total optimizer steps; Both write a checkpoint to `checkpoints/`; 
-see the "Not yet implemented" list above for what's still missing before predictions are meaningful.
+Each script falls back to an in-memory synthetic dataset if
+`data.manifest_path` isn't set, so every step above is runnable end-to-end
+without real data as a smoke test. Evaluate a trained stream standalone with
+`training/test_npr.py` / `training/evaluate_bayar_srm.py` (the latter also
+runs the resize/downscale robustness stress test), or benchmark the fused
+pipeline with `training/evaluate.py`.
+
+## Limitations & What We'd Improve With More Time
+
+- **Joint fusion fine-tuning is unfinished.** The semantic and forensic
+  streams have each been validated independently, but the default
+  `DetectorPipeline` fusion path isn't jointly fine-tuned end-to-end — the
+  `checkpoints/detector_bundle.pt` bundle (see [step
+  2](#2-run-inference-with-our-pretrained-real-weights)) covers a real
+  trained pipeline today, but it's a separate path from the one described in
+  the original architecture, not a drop-in replacement for it.
+- **The forensic branch isn't fully settled.** We built two candidate
+  frontends (parameter-free NPR, and Bayar constrained-conv + SRM) behind a
+  swappable interface, but haven't finished the resize/downscale stress test
+  needed to say definitively which one holds up better under aggressive
+  rescaling — the published weights use Bayar+SRM, but NPR alone scores
+  higher on clean val AUC.
+- **Robustness is only spot-checked, not fully benchmarked.** We built the
+  full degradation pipeline (JPEG Q30–90, blur, 0.25x–0.5x rescale, noise,
+  jitter, 80% crop) and the eval scaffolding, but haven't yet generated the
+  full accuracy-vs-severity degradation curves across every transform — only
+  targeted resize/downscale numbers reported above.
+- **Explainability has real gaps, not just missing polish.** Semantic
+  Grad-CAM, forensic Grad-CAM, and the Bayar+SRM intermediate view are wired
+  to the real fused model (see [`ARCHITECTURE.md`](ARCHITECTURE.md)), but
+  attention rollout is unsupported (torchvision's ViT forward path doesn't
+  expose attention matrices) and per-branch coalition logits are unsupported
+  for the published bundle (it doesn't ship a trained feature-ablation
+  baseline) — the app reports these limitations rather than faking a result.
+- **Training data is a hackathon-scale subset.** Results above come from a
+  partial pull (10K images) from `SID_Set`, not the full dataset. Scaling up
+  training data is the single biggest lever left for real accuracy gains.
+- **No CI yet.** `pytest tests/` runs locally but isn't wired into GitHub
+  Actions, so regressions can currently slip into a checkpoint unnoticed.
+
+With more time, the priority order would be: finish joint fusion training →
+settle NPR vs. Bayar+SRM with the resize stress test → run the full
+robustness benchmark → cover attention rollout and branch contributions →
+scale up the dataset.
+
+## Team Member Contributions
+
+RAID was built by a 4-person team, split along the same lines as the
+architecture so nobody had to block on someone else's unfinished module:
+
+- **morpheuschoo** — Model & training pipeline lead: the semantic stream
+  (`src/models/semantic_stream.py`), its training loop
+  (`training/train_semantic.py`), fusion training
+  (`training/train_fusion.py`), base configs, and the Hugging Face data
+  importer.
+- **Goh Jin Yu ([@Beastarz](https://github.com/Beastarz))** — Scaffolding,
+  docs, and inference frontend: the original project blueprint/skeleton
+  (`ARCHITECTURE.md`, `.claude/CLAUDE.md`, `TODO.md`), the data loader and
+  augmentation pipeline scaffolding, the Gradio demo (`app.py`), and this
+  README.
+- **Shawn Wee ([@McFishhh](https://github.com/McFishhh))** — Forensic stream
+  lead: the NPR stream (`src/models/npr_stream.py`,
+  `training/train_npr.py`), the swappable Bayar+SRM frontend
+  (`src/models/frontend_bayar.py`, `training/train_bayar_srm.py`), and their
+  standalone robustness evaluation scripts.
+- **Shen Yu Chen, Keith ([@blurfrost](https://github.com/blurfrost))** —
+  Evaluation & explainability lead: the metrics/calibration/reporting suite
+  (`training/evaluation/`) and the real Grad-CAM, faithfulness, attention
+  rollout, and branch-contribution attribution logic wired to the fused
+  detector (`src/explainability/`), plus their corresponding tests.
+
+See [`ABOUT.md`](ABOUT.md) for the full write-up of what we learned, the
+challenges we hit, and what's next.
 
 ## Contributing
 
-Follow the module ownership, tensor contracts, and coding conventions defined in
-[`.claude/CLAUDE.md`](.claude/CLAUDE.md) before opening a PR. In particular:
+Follow the module ownership, tensor contracts, and coding conventions
+defined in [`.claude/CLAUDE.md`](.claude/CLAUDE.md) before opening a PR. In
+particular:
 
 - Keep total model parameters under 2B (target ~337M).
 - Never modify `src/models/base_stream.py` without team consensus.

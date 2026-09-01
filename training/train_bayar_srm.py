@@ -126,8 +126,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         crop_size=args.crop_size,
         num_synthetic_samples=data_cfg["num_synthetic_samples"],
         seed=config["seed"],
+        resize_augmentation=True,
     )
     train_subset, val_subset = _split_dataset(full_dataset, data_cfg["val_split"], config["seed"])
+    full_dataset.train_indices = set(train_subset.indices)
     run_logger.info("Dataset split: %d train / %d val", len(train_subset), len(val_subset))
 
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=config["num_workers"])

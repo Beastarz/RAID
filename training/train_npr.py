@@ -7,18 +7,18 @@ forensic stream in isolation. Run from the repo root as:
     python -m training.train_npr --config configs/base_config.yaml
 
 Trains NPRStream + a small standalone classifier head (NOT the fused
-DetectorPipeline -- fusion.py/semantic_stream.py/frequency_stream.py aren't
-touched here). Unlike the fixed-step wiring smoke test this started as, this
+DetectorPipeline -- fusion.py/semantic_stream.py aren't touched here). Unlike
+the fixed-step wiring smoke test this started as, this
 is a real short training loop (5 epochs by default, per npr_stream_guide.md
 SS5): a train/val split, AdamW + cosine LR schedule, a pos_weight-balanced
 BCE loss, and per-epoch val loss/accuracy/AUC -- the checkpoint is only
 overwritten when val AUC improves, so `checkpoints/npr_stream.pt` always
 holds the best epoch seen, not just the last one.
 
-Deliberately self-contained (no shared module with train_semantic.py /
-train_frequency.py) so a teammate can iterate on this stream without
-touching a shared file -- and, unlike those two, NPR also cannot share their
-dataloader transform even in principle: per npr_stream_guide.md SS2.1, NPR's
+Deliberately self-contained (no shared module with train_semantic.py) so a
+teammate can iterate on this stream without touching a shared file -- and
+NPR also cannot share that dataloader transform even in principle: per
+npr_stream_guide.md SS2.1, NPR's
 residual signal is destroyed by resizing, so its input must be raw [0, 1]
 pixels at a native-resolution crop, never the resized + ImageNet-normalized
 tensor training/data/augmentations.py produces for the other streams. This
@@ -79,9 +79,12 @@ class NPRCropDataset(Dataset):
         crop_size: int = 256,
         num_synthetic_samples: int = 32,
         seed: int = 42,
+        resize_augmentation: bool = False,
     ) -> None:
         self.crop_size = crop_size
         self._rng = np.random.default_rng(seed)
+        self.resize_augmentation = resize_augmentation
+        self.train_indices = set()
         self._samples: List[Tuple[Optional[Path], int]] = []
 
         if manifest_path and Path(manifest_path).exists():
@@ -129,6 +132,11 @@ class NPRCropDataset(Dataset):
     def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
         path, label = self._samples[index]
         image = self._load_native_image(index, path)
+        if self.resize_augmentation and index in self.train_indices:
+            scale = float(self._rng.uniform(0.25, 0.75))
+            h, w = image.shape[:2]
+            small = Image.fromarray(image).resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.BILINEAR)
+            image = np.asarray(small.resize((w, h), Image.BILINEAR), dtype=np.uint8)
         crop = self._random_crop(image)
         tensor = torch.from_numpy(crop.astype(np.float32) / 255.0).permute(2, 0, 1)  # [3, crop, crop] in [0, 1]
         label_tensor = torch.tensor([float(label)], dtype=torch.float32)
@@ -256,6 +264,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         seed=config["seed"],
     )
     train_subset, val_subset = _split_dataset(full_dataset, data_cfg["val_split"], config["seed"])
+    full_dataset.train_indices = set(train_subset.indices)
     run_logger.info("NPR dataset split: %d train / %d val", len(train_subset), len(val_subset))
 
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, num_workers=config["num_workers"])
@@ -337,9 +346,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                 best_val_auc = current_auc
             epochs_without_improvement = 0
             torch.save(model.stream.state_dict(), checkpoint_path)
-            # The stream-only checkpoint above matches train_semantic.py /
-            # train_frequency.py's convention (a future DetectorPipeline
-            # fine-tune only wants the backbone). The head is saved
+            # The stream-only checkpoint above matches train_semantic.py's
+            # convention (a future DetectorPipeline fine-tune only wants the
+            # backbone). The head is saved
             # separately so this run's classifier can still be evaluated
             # standalone -- see test_npr.py -- without overloading that
             # shared checkpoint format.

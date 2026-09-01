@@ -1,4 +1,4 @@
-# Base Project Blueprint: Modular AI Image Detector
+# Architecture: Modular AI Image Detector
 
 This blueprint provides a clean, decoupled skeleton codebase for a hackathon team. It abstracts specific neural network models behind pluggable interfaces, allowing teammates to work in parallel on data pipelines, feature extraction backbones, fusion layers, evaluation benchmarks, and explainability modules without breaking each other's code.
 
@@ -17,18 +17,33 @@ ai-image-detector/
 │ │ ├── **init**.py
 │ │ ├── base_stream.py # Abstract class for extraction streams
 │ │ ├── semantic_stream.py # Stream 1: High-level semantic backbone wrapper
-│ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (replaces frequency_stream.py)
-│ │ ├── frequency_stream.py # SUPERSEDED by npr_stream.py; kept on disk, no longer part of the active architecture
+│ │ ├── npr_stream.py # Stream 2: Low-level NPR forensic backbone (default forensic stream)
+│ │ ├── frontend_bayar.py # Swappable Bayar+SRM frontend for NPRStream (M3 fallback, see §4.B.3)
 │ │ ├── fusion.py # Cross-stream feature fusion layer
-│ │ └── detector.py # End-to-end PyTorch Lightning / PyTorch Module
+│ │ ├── detector.py # End-to-end PyTorch Lightning / PyTorch Module (stub-weight DetectorPipeline)
+│ │ ├── fused_detector.py # CanonicalFusedDetector: the real, jointly-scored semantic+forensic+fusion graph
+│ │ └── checkpoint_bundle.py # Self-describing bundle contract: builds/loads/validates detector_bundle.pt
 │ └── explainability/ # Team Member D: Diagnostic Tools (used by predict.py / app.py)
 │ ├── **init**.py
-│ └── visualizer.py # Heatmap & attention map generation
+│ ├── contracts.py # Versioned prediction/explanation record schemas (Capability, AttributionTarget, ...)
+│ ├── adapters/detector_adapter.py # Explainability boundary for the published CanonicalFusedDetector bundle
+│ ├── gradcam.py # Model-independent Grad-CAM (forward/backward hooks + CAM math)
+│ ├── attribution.py # Vanilla gradients / Integrated Gradients
+│ ├── attention_rollout.py # Attention-rollout primitive (unsupported for this model, see §4.E)
+│ ├── branch_contributions.py # Coalition/ablation logit attribution across fused branches
+│ ├── faithfulness.py # Deletion/insertion faithfulness curves for a given heatmap
+│ ├── render.py # Heatmap normalization, colormaps, PNG rendering
+│ ├── serialization.py # JSON explanation envelopes, lossless NPY artifacts, JSONL I/O
+│ └── artifacts.py / rendering.py / visualizer.py # Legacy scaffolding for the stub DetectorPipeline, superseded by the above for the published bundle
 ├── training/ # Training pipeline — everything only the offline pipeline needs
 │ ├── **init**.py
 │ ├── train_semantic.py # Trains the semantic stream in isolation, saves a checkpoint
 │ ├── train_npr.py # Trains the NPR stream in isolation: real multi-epoch loop, own crop dataset
-│ ├── test_npr.py # Evaluates a trained NPR checkpoint on its held-out val split
+│ ├── train_bayar_srm.py # Trains NPRStream with the Bayar+SRM frontend swapped in
+│ ├── train_fusion.py # Fuses two frozen, already-trained streams + trains the classification head
+│ ├── build_detector_bundle.py # Packages the 3 trained checkpoints into the self-describing detector_bundle.pt (parity-checked against an independent 3-file scorer)
+│ ├── test_npr.py / evaluate_npr.py # Evaluate a trained NPR checkpoint (held-out split / resize stress test)
+│ ├── evaluate_bayar_srm.py # Same, for the Bayar+SRM checkpoint
 │ ├── evaluate.py # Main evaluation CLI against benchmark transforms
 │ ├── data/ # Team Member A: Data & Augmentations
 │ │ ├── **init**.py
@@ -40,15 +55,18 @@ ai-image-detector/
 │ └── evaluation/ # Team Member C: Benchmark & Metrics
 │ ├── **init**.py
 │ ├── robustness_suite.py # Automated robustness test runner across transforms
-│ └── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
+│ ├── metrics.py # Accuracy, ROC-AUC, F1, degradation curve tools
+│ ├── calibration.py # ECE, reliability bins, Brier score
+│ ├── schemas.py # Versioned report/record schemas
+│ └── report.py # JSON-serializable report assembly
 ├── tests/ # Integration and unit tests
-│ ├── test_data.py
-│ ├── test_models.py
-│ └── test_evaluation.py
-├── predict.py # Inference pipeline: single-image / Batch prediction script
+├── predict.py # Inference pipeline: single-image / Batch prediction + explanation CLI (loads checkpoints/detector_bundle.pt)
+├── evaluate_predict.py # Evaluates the checkpoint trio against a labeled manifest
 ├── app.py # Inference pipeline: Gradio frontend
 ├── requirements.txt # Dependencies
-└── README.md # Setup and usage guide
+├── README.md # Setup and usage guide
+├── ABOUT.md # Project writeup: motivation, learnings, what's next
+└── ARCHITECTURE.md # This file
 
 ---
 
@@ -72,46 +90,47 @@ share one data pipeline: NPR's residual signal is destroyed by resizing, so
 it can't go through the same resize-to-512 + ImageNet-normalize step the
 semantic stream needs. Each stream therefore owns its own dataset class.
 
-```
-configs/base_config.yaml, configs/augmentations.yaml
-              │
-       ┌──────┴──────────────────────────────┐
-       ▼                                      ▼
-training/data/dataset.py                training/train_npr.py's own
-(AIGCDataset: manifest CSV                NPRCropDataset (same manifest
-or synthetic -> [3, 512, 512],            CSV, but: random native-resolution
-resized + ImageNet-normalized)            crop, raw [0,1], never resized)
-       │                                      │
-       ▼                                      │
-training/data/datamodule.py                   │
-(DataLoader: batching,                        │
- contiguous train/val split)                  │
-       │                                      ▼
-       ▼                              (random, seeded train/val split --
-training/data/augmentations.py         not contiguous, see train_npr.py)
-(RobustnessTransforms, applied                │
- before ToTensorV2())                         │
-       │                                      │
-       ▼                                      ▼
- src/models/                           src/models/
- semantic_stream                       npr_stream (NPRStream)
-       │                                      │
-       ▼                                      ▼
- training/                             training/train_npr.py
- train_semantic.py                     (+ linear head, AdamW + cosine LR,
- (+ linear head, loss,                  pos_weight BCE, per-epoch val
- optimizer -- mock,                     loss/accuracy/AUC -- a REAL
- fixed step count)                      multi-epoch loop, not mock)
-       │                                      │
-       ▼                                      ▼
- checkpoints/                          checkpoints/npr_stream.pt (backbone)
- semantic_stream.pt                    + checkpoints/npr_head.pt (head),
-                                        saved only when val AUC improves
-                                               │
-                                               ▼
-                                        training/test_npr.py (re-derives the
-                                        same val split, reports held-out
-                                        loss/accuracy/AUC)
+```mermaid
+flowchart TD
+    CFG["configs/base_config.yaml<br/>configs/augmentations.yaml"]
+
+    subgraph SEM["Semantic Stream Path"]
+        direction TB
+        SD["training/data/dataset.py<br/><b>AIGCDataset</b>: manifest CSV or synthetic<br/>→ [3, 512, 512], resized + ImageNet-normalized"]
+        SDM["training/data/datamodule.py<br/>DataLoader: batching, contiguous train/val split"]
+        SAUG["training/data/augmentations.py<br/><b>RobustnessTransforms</b>, applied before ToTensorV2()"]
+        SMOD["src/models/semantic_stream.py"]
+        STR["training/train_semantic.py<br/>+ linear head, loss, optimizer — mock,<br/>fixed step count"]
+        SCKPT["checkpoints/semantic_stream.pt"]
+        SD --> SDM --> SAUG --> SMOD --> STR --> SCKPT
+    end
+
+    subgraph NPR["NPR Stream Path"]
+        direction TB
+        ND["training/train_npr.py's own <b>NPRCropDataset</b><br/>(same manifest CSV, but: random native-resolution<br/>crop, raw [0,1], never resized)"]
+        NSPLIT["random, seeded train/val split —<br/>not contiguous (see train_npr.py)"]
+        NMOD["src/models/npr_stream.py (NPRStream)"]
+        NTR["training/train_npr.py<br/>+ linear head, AdamW + cosine LR, pos_weight BCE,<br/>per-epoch val loss/accuracy/AUC — a REAL<br/>multi-epoch loop, not mock"]
+        NCKPT["checkpoints/npr_stream.pt (backbone)<br/>+ checkpoints/npr_head.pt (head),<br/>saved only when val AUC improves"]
+        NTEST["training/test_npr.py<br/>re-derives the same val split, reports<br/>held-out loss/accuracy/AUC"]
+        ND --> NSPLIT --> NMOD --> NTR --> NCKPT --> NTEST
+    end
+
+    CFG --> SD
+    CFG --> ND
+
+    classDef cfg fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef sem fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef npr fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+    classDef ckpt fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
+
+    class CFG cfg;
+    class SD,SDM,SAUG,SMOD,STR sem;
+    class ND,NSPLIT,NMOD,NTR,NTEST npr;
+    class SCKPT,NCKPT ckpt;
+
+    style SEM fill:#eff6ff,stroke:#60a5fa,stroke-width:1px,color:#1e3a5f
+    style NPR fill:#fdf4ff,stroke:#e879f9,stroke-width:1px,color:#4a044e
 ```
 
 Real data for either path comes from `training/data/import_hf.py` (streams a
@@ -124,7 +143,7 @@ fall back to an in-memory synthetic dataset if that path doesn't exist yet.
 unless `--checkpoint` is given) fused `DetectorPipeline` directly -- it does
 not yet load the per-stream checkpoints above into it, and note that a raw
 `NPRStream` checkpoint's keys won't match `DetectorPipeline`'s
-`frequency_stream.*`-prefixed keys without remapping; wiring that up is
+`forensic_stream.*`-prefixed keys without remapping; wiring that up is
 tracked in `TODO.md` §3/§4.
 
 Entry points: `python -m training.train_semantic --config configs/base_config.yaml`,
@@ -135,27 +154,43 @@ all run from the repo root (see [`.claude/CLAUDE.md`](.claude/CLAUDE.md)).
 
 ### Inference Pipeline (online, consumes a checkpoint)
 
-```
-Image file / directory (--image)
-              │
-              ▼
-   predict.py::load_image_tensor (resize 512x512, ImageNet normalize -> [1, 3, 512, 512])
-              │
-              ▼
-   src/models/detector.py (DetectorPipeline, weights loaded from --checkpoint if given)
-              │
-              ▼
-   {"logit", "prob", "features"} dict
-              │
-              ▼
-   predict.py -> JSON line per image (CLI)     app.py -> Gradio UI (label, probability, heatmap)
-                                                      │
-                                                      ▼
-                                        src/explainability/visualizer.py (saliency overlay)
+```mermaid
+flowchart TD
+    IMG["Image file / directory (--image)"]
+    LOAD["predict.py::load_image_tensor<br/>resize 512x512, ImageNet normalize<br/>→ [1, 3, 512, 512]"]
+    DET["src/models/detector.py<br/><b>DetectorPipeline</b><br/>(weights loaded from --checkpoint if given)"]
+    OUT["{'logit', 'prob', 'features'} dict"]
+    CLI["predict.py → JSON line per image (CLI)"]
+    GUI["app.py → Gradio UI<br/>(label, probability, heatmap)"]
+    VIZ["src/explainability/visualizer.py<br/>(saliency overlay)"]
+
+    IMG --> LOAD --> DET --> OUT
+    OUT --> CLI
+    OUT --> GUI --> VIZ
+
+    classDef pre fill:#ede9fe,stroke:#7c3aed,stroke-width:1px,color:#2e1065;
+    classDef core fill:#d1fae5,stroke:#059669,stroke-width:1px,color:#064e3b;
+    classDef cli fill:#dbeafe,stroke:#2563eb,stroke-width:1px,color:#1e3a5f;
+    classDef gui fill:#fae8ff,stroke:#a21caf,stroke-width:1px,color:#4a044e;
+
+    class IMG,LOAD pre;
+    class DET,OUT core;
+    class CLI cli;
+    class GUI,VIZ gui;
 ```
 
 Entry points: `python predict.py --image <path> [--checkpoint <ckpt>]` and
 `python app.py` (Gradio server), both at the repo root.
+
+The diagram above is the stub `DetectorPipeline` path. In practice both entry
+points prefer `checkpoints/detector_bundle.pt` when present: `predict.py`/
+`app.py` load it through `src/models/checkpoint_bundle.py` into a
+`CanonicalFusedDetector` (`src/models/fused_detector.py`) instead of the
+random/stub-weight `DetectorPipeline`, and `VIZ` in the diagram becomes real
+Grad-CAM / faithfulness / attribution output via
+`src/explainability/adapters/detector_adapter.py` rather than a placeholder
+saliency map — see [§4.E](#e-explainability-module-srcexplainability) for
+that path in detail.
 
 The two pipelines share `src/models/` and the `[B, 3, H, W] -> {logit, prob, features}`
 contract. `training/data/` and `training/evaluation/` live entirely inside
@@ -206,11 +241,11 @@ Key classes to implement:
 - _Purpose_: Extracts deep semantic and contextual representations resilient to surface noise and downsampling.
 - _Wrapper Contract_: Accepts `[B, 3, H, W]`, outputs a high-level representation vector `[B, D1]`. Any suitable vision foundation backbone can be plugged into this class without changing downstream code.
 
-3. **Stream 2: Low-Level Forensic / NPR Stream (`npr_stream.py`, replaces `frequency_stream.py`)**:
+3. **Stream 2: Low-Level Forensic / NPR Stream (`npr_stream.py`)**:
 
 - _Purpose_: Reads the Neighboring Pixel Relationships (NPR) residual -- a fixed, parameter-free nearest-neighbour downsample-upsample round trip subtracted from the input -- which isolates the periodic local-correlation pattern every GAN/diffusion decoder's final upsampling stack leaves behind. Reference: Tan et al., CVPR 2024.
-- _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`) -- the frontend swap point specifically exists so a future Bayar constrained-conv + SRM-filter frontend can replace `NPR` behind the identical interface if a resize-robustness stress test shows the fixed operator doesn't hold up.
-- The earlier FFT-magnitude + pool/linear stub (`frequency_stream.py`) remains in the tree but is superseded and no longer part of the active architecture.
+- _Wrapper Contract_: Accepts raw `[0, 1]` pixels at a native-resolution crop `[B, 3, H, W]` (never resized -- resizing overwrites the exact artifact this stream reads), computes the residual, rescales it with `BatchNorm2d`, and reads it with a backbone to output `[B, D2]`. Both the residual frontend and the backbone are swappable via constructor args (`frontend=`, `backbone=`).
+- The resize/downscale stress test (`training/evaluate_npr.py`) confirmed the fixed NPR operator collapses toward chance under aggressive rescaling, so the frontend swap point is exercised for real: `frontend_bayar.py`'s `BayarSRMFrontend` (a learnable Bayar constrained conv + fixed SRM filters) plugs into the identical interface as `NPRStream(frontend=BayarSRMFrontend())` -- this is what the published pretrained weights and the `detector_bundle.pt` bundle `predict.py`/`app.py` load use. `DetectorPipeline`'s default `forensic_stream` still uses plain `NPR`, since that default path is a shape-correct stub, not the trained model (see [Section 2](#2-pipeline-data-flow-training-vs-inference)).
 
 ### C. Fusion & Classification Head (`src/models/fusion.py` & `detector.py`)
 
@@ -239,10 +274,74 @@ Key tasks to implement:
 
 **Responsibility:** Provide diagnostic maps indicating which image patches or features triggered the classification score.
 
-Key tasks to implement:
+Unlike the other sections above, this one describes what was actually built,
+not just the original blueprint task list -- the module is real and wired to
+the published `CanonicalFusedDetector` bundle, not a placeholder.
 
-- `AttributionVisualizer`: Uses spatial gradient attribution (e.g., Grad-CAM) or cross-attention token weights to project importance scores back onto the original image space.
-- Saves diagnostic visual outputs overlaid on input images for error analysis.
+**Design: model-independent primitives + one adapter, not one bespoke
+implementation per model.** `src/explainability/` (`gradcam.py`,
+`attribution.py`, `attention_rollout.py`, `branch_contributions.py`,
+`faithfulness.py`) implements each attribution technique once, generically,
+against `nn.Module` hooks and plain tensors. `src/explainability/adapters/
+detector_adapter.py` is the single place that knows about the fused
+detector: it resolves the contract's named target paths (below) into actual
+submodules on `CanonicalFusedDetector`, prepares model inputs via
+`fused_detector.prepare_fused_inputs`, and returns results shaped to
+`contracts.py`'s schemas. `predict.py --explanation-method ...` and `app.py`'s
+explanation views both call through this one adapter -- neither talks to
+`gradcam.py`/`attribution.py` directly.
+
+**Supported explanation modes** (see `docs/final_model_contract.md` for the
+authoritative target-path list, which the bundle manifest also embeds):
+
+- **Semantic Grad-CAM** -- `gradcam.py` hooked at
+  `semantic_stream.backbone.encoder.layers.encoder_layer_11.ln_1`.
+  `detector_adapter.vit_token_grid` strips the CLS token and reshapes the
+  196 remaining patch tokens to a `14x14` grid before CAM math runs.
+- **Forensic Grad-CAM** -- hooked at `forensic_stream.backbone.4.2.conv3`,
+  producing a native `128x128` grid.
+- **Bayar+SRM fused intermediate** -- a non-class-conditioned dump of
+  activity at `frontend.bayar`, `frontend.srm`, `frontend.fuse`,
+  `backbone.4`, or `pool`; shows what the forensic frontend produced before
+  the backbone/classifier ever sees it.
+- **Semantic Integrated Gradients** (`attribution.py`) -- an explicit,
+  opt-in, more expensive alternative to Grad-CAM for the semantic branch.
+- **Deletion/insertion faithfulness** (`faithfulness.py`) -- given a named
+  heatmap (typically forensic Grad-CAM), progressively deletes/inserts the
+  highest-ranked raw-image patches and tracks the logit curve, as a sanity
+  check that the heatmap the model produced is actually load-bearing for its
+  own prediction.
+
+**Explicitly unsupported, and reported as such rather than faked**
+(`contracts.py`'s `CapabilityStatus` distinguishes "unsupported" from a
+computed result so `predict.py`/`app.py` never silently return a
+meaningless map):
+
+- **Attention rollout** (`attention_rollout.py`) -- the primitive exists and
+  is unit-tested, but is unsupported for this model because torchvision's
+  ViT forward path doesn't expose intermediate attention matrices to hook.
+- **Branch-coalition / feature-ablation logits** (`branch_contributions.py`)
+  -- the primitive exists, but is unsupported for the published bundle
+  because it doesn't embed a trained feature-ablation baseline; the code
+  deliberately refuses to substitute zeros as an implicit baseline, since
+  that would misrepresent a branch's contribution.
+
+**Output contract.** `render.py` turns a raw attribution tensor into a
+normalized, colormapped PNG at consistent display resolution (nearest-
+neighbor upscale for the semantic `14x14` grid so patch boundaries stay
+honest; bilinear for the forensic `128x128` grid). `serialization.py` writes
+the paired lossless `.npy` array and a versioned `explanation.json` envelope
+per `contracts.py`, recording native grid size, display size, interpolation,
+coordinate space, and the model/preprocessing identity the explanation was
+computed against -- so a saved explanation is never ambiguous about what
+produced it. Default output directory is `outputs/explanations/<sample-id>/`.
+
+**Bundle-level guarantee.** `src/models/checkpoint_bundle.py`'s
+`validate_explainability_contract` checks at bundle-build time
+(`training/build_detector_bundle.py`) that every target/intermediate path the
+contract declares actually resolves against the canonical module tree --
+explainability target paths can't silently go stale as the model code
+changes without the bundle build failing first.
 
 ---
 
