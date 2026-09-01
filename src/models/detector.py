@@ -14,6 +14,12 @@ import torch.nn as nn
 from src.models.npr_stream import NPRStream
 from src.models.fusion import FeatureFusion
 from src.models.semantic_stream import SemanticStream
+# The legacy DetectorPipeline remains available for old smoke paths.  Export
+# the final topology here as well so callers have one obvious model namespace
+# while the CLI migration is completed in the later integration wave.
+from src.models.fused_detector import CanonicalFusedDetector, FusedDetector
+
+__all__ = ["DetectorPipeline", "CanonicalFusedDetector", "FusedDetector"]
 
 
 class DetectorPipeline(nn.Module):
