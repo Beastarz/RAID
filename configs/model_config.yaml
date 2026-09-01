@@ -1,5 +1,9 @@
 # Configuration: model_config.yaml
-# Model architecture settings.
+# Model architecture settings for the published fused detector.
+#
+# The model consumes two views made from one shared 512x512 resize.  The
+# semantic branch receives ImageNet-normalized pixels; the forensic branch
+# receives those same resized pixels in raw [0, 1] form.
 
 semantic:
   # Set true for real training; it downloads torchvision's ViT-B/16 weights.
@@ -9,9 +13,24 @@ semantic:
   output_dim: 1024
 
 forensic:
-  # Default: NPRStream(backbone="resnet_shallow"). Bayar+SRM variant (what
-  # the published checkpoints use) keeps the same output_dim.
+  frontend: bayar_srm
+  backbone: resnet_shallow
   output_dim: 256
+  pixel_range: [0.0, 1.0]
 
 fusion:
   fused_dim: 512
+
+preprocessing:
+  image_size: 512
+  resize_interpolation: bilinear
+  shared_resize: true
+  decode_color: RGB
+  dtype: float32
+  semantic_normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+decision:
+  threshold: 0.5
+  equality: greater_or_equal

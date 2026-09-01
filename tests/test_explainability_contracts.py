@@ -265,14 +265,11 @@ class MinimalAdapter:
     def capabilities(self):
         return {
             Capability.PREDICTION: CapabilityStatus.supported(),
-            Capability.SEMANTIC_TARGET: CapabilityStatus.supported(),
-            Capability.NPR_TARGET: CapabilityStatus.unsupported("NPR is not present"),
+            Capability.ATTRIBUTION_TARGETS: CapabilityStatus.supported(),
             Capability.ATTENTION_TENSORS: CapabilityStatus.unsupported(
                 "attention is not exposed"
             ),
-            Capability.PRE_NORMALIZATION_NPR_RESIDUALS: CapabilityStatus.unsupported(
-                "NPR is not present"
-            ),
+            Capability.INTERMEDIATE_REPRESENTATIONS: CapabilityStatus.supported(),
             Capability.BRANCH_SUBSET_LOGITS: CapabilityStatus.unsupported(
                 "branch ablation is not implemented"
             ),
@@ -284,17 +281,24 @@ class MinimalAdapter:
     def predict(self, prepared_model_inputs):
         return AdapterPrediction(0.0, 0.5, 1, 0.5)
 
-    def semantic_target(self, prepared_model_inputs):
-        return CapabilityResult.supported(AttributionTarget("semantic target"))
-
-    def npr_target(self, prepared_model_inputs):
-        return CapabilityResult.unsupported("NPR is not present")
+    def attribution_targets(self, prepared_model_inputs):
+        return CapabilityResult.supported(
+            {
+                "semantic": AttributionTarget("semantic target"),
+                "forensic": AttributionTarget("forensic target"),
+            }
+        )
 
     def attention_tensors(self, prepared_model_inputs):
         return CapabilityResult.unsupported("attention is not exposed")
 
-    def pre_normalization_npr_residuals(self, prepared_model_inputs):
-        return CapabilityResult.unsupported("NPR is not present")
+    def intermediate_representations(self, prepared_model_inputs):
+        return CapabilityResult.supported(
+            {
+                "semantic": {"tokens": "semantic tokens"},
+                "forensic": {"features": "forensic features"},
+            }
+        )
 
     def branch_subset_logits(self, prepared_model_inputs):
         return CapabilityResult.unsupported("branch ablation is not implemented")
@@ -305,7 +309,14 @@ def test_adapter_protocol_is_runtime_checkable_without_model_knowledge():
     assert isinstance(adapter, ExplainabilityAdapter)
     prepared = adapter.prepare_source_image("raw image")
     assert adapter.predict(prepared).predicted_probability == 0.5
+    targets = adapter.attribution_targets(prepared)
+    assert targets.status.available
+    assert targets.value["semantic"].value == "semantic target"
+    assert targets.value["forensic"].value == "forensic target"
     assert not adapter.attention_tensors(prepared).status.available
+    representations = adapter.intermediate_representations(prepared)
+    assert representations.status.available
+    assert representations.value["forensic"]["features"] == "forensic features"
 
 
 def test_contract_module_has_no_model_or_training_imports():
