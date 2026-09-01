@@ -222,7 +222,7 @@ def build_interface():
     import gradio as gr
 
     with gr.Blocks(title="RAID") as demo:
-        gr.Markdown("# AI Image Detector\nUpload an image to estimate the probability it is AI-generated.")
+        gr.Markdown("# RAID - AI Image Detector\nUpload an image to estimate the probability it is AI-generated.")
         gr.Markdown(MODEL_STATUS)
         with gr.Row():
             with gr.Column():
