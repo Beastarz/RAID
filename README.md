@@ -1,7 +1,8 @@
-# RAID - Robust AI-generated Image Detector
+# RAID — Robust AI-generated Image Detector
 
-RAID is a dual-stream detector for identifying AI-generated images. The final
-published model combines:
+Catch AI-generated images before they are mistaken for authentic ones. RAID is
+a dual-stream detector designed to remain useful after real-world image
+processing such as recompression and resizing. The final published model combines:
 
 - a ViT-B/16 semantic branch for high-level structure and content;
 - a Bayar+SRM shallow-ResNet forensic branch for residual, texture, and
@@ -14,7 +15,7 @@ same pixels in float32 `[0, 1]` form. Runtime inference requires a validated,
 self-describing checkpoint bundle and never falls back to random weights.
 
 See [MODEL_README.md](MODEL_README.md) for training details and reported model
-results, [BLUEPRINT.md](BLUEPRINT.md) for the broader architecture, and
+results, [ARCHITECTURE.md](ARCHITECTURE.md) for the broader architecture, and
 [docs/final_model_contract.md](docs/final_model_contract.md) for the exact
 runtime contract.
 
@@ -298,6 +299,19 @@ tests/                                   Unit and integration tests
 
 Checkpoint files, datasets, generated explanations, and evaluation outputs are
 gitignored local artifacts.
+
+## Team contributions
+
+- **morpheuschoo** — semantic model and training pipeline, fusion training,
+  configuration, and Hugging Face data import.
+- **Goh Jin Yu ([@Beastarz](https://github.com/Beastarz))** — project
+  scaffolding, architecture documentation, data pipeline, and Gradio frontend.
+- **Shawn Wee ([@McFishhh](https://github.com/McFishhh))** — NPR and Bayar+SRM
+  forensic streams, training, and robustness evaluation.
+- **Shen Yu Chen, Keith ([@blurfrost](https://github.com/blurfrost))** —
+  evaluation, explainability, output contracts, and integration tests.
+
+See [ABOUT.md](ABOUT.md) for the longer project retrospective.
 
 ## Training and legacy components
 

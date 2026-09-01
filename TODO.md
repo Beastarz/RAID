@@ -2,7 +2,7 @@
 
 Tracks remaining work for the AI Image Detector project. See [`README.md`](README.md)
 for what's already done and [`.claude/CLAUDE.md`](.claude/CLAUDE.md) /
-[`BLUEPRINT.md`](BLUEPRINT.md) for the architecture contracts everything below must
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the architecture contracts everything below must
 follow.
 
 ## Done
@@ -10,8 +10,8 @@ follow.
 - [x] `src/models/base_stream.py` — `BaseFeatureStream` abstract interface
 - [x] `src/models/semantic_stream.py` — real ViT-B/16 stream,
       `[B, 3, H, W] -> [B, 1024]`
-- [x] `src/models/npr_stream.py` — `NPRStream`, replaces the `frequency_stream.py`
-      stub (kept on disk, superseded). Real NPR residual operator + swappable
+- [x] `src/models/npr_stream.py` — `NPRStream`, replaces the retired
+      `frequency_stream.py` predecessor. Real NPR residual operator + swappable
       backbone (`resnet_shallow`/`convnext_tiny`) + swappable frontend (for a
       Bayar+SRM candidate), `[B, 3, H, W] (raw [0,1], native crop) ->
       [B, 256 or 768]`. Has an actual trained checkpoint (see below), not just a
@@ -21,7 +21,8 @@ follow.
       `-> [B, 512]`
 - [x] `src/models/detector.py` — `DetectorPipeline`, returns `{logit, prob, features}`
 - [x] `predict.py` — single-image / directory CLI inference, JSON output
-- [x] `app.py` — Gradio frontend with placeholder saliency overlay
+- [x] `app.py` — Gradio frontend with canonical-bundle inference and supported
+      explanation views
 - [x] `.gitignore`, `README.md` setup guide
 - [x] `training/data/augmentations.py` — `RobustnessTransforms` (Albumentations):
       JPEG compression (Q 30-90), Gaussian Blur (sigma 0.5-2.0), Downscale
@@ -37,11 +38,9 @@ follow.
 - [x] `training/logging_utils.py` + logging throughout the data path for
       debugging (per-sample augmentation params at DEBUG, dataset/datamodule
       sizes at INFO).
-- [x] `tests/test_data.py` — minimal critical-path tests: augmentation output
-      shape contract, dataset label/shape contract, and legacy stream-training
-      smoke coverage (`train_semantic.py`/`train_frequency.py`, including
-      checkpoint-file creation). Additional NPR/Bayar+SRM training coverage is
-      tracked in the updated training section below.
+- [x] `tests/test_data.py` — minimal critical-path tests for augmentation output,
+      dataset label/shape contracts, and semantic stream-training smoke coverage.
+      Additional NPR/Bayar+SRM training coverage is tracked below.
 - [x] `training/data/import_hf.py` — streams a real image dataset from the
       Hugging Face Hub (default `RAID-techjam/SID_Set`), exports a `--limit`-sized
       JPEG subset, and writes an `AIGCDataset`-compatible `manifest.csv`
@@ -93,7 +92,7 @@ explainability target.
 - [x] Select Bayar+SRM with the shallow ResNet backbone as the active forensic
       branch for the published fused detector; retain NPR only as an experiment
       and provenance artifact.
-- [ ] Replace the legacy `frequency` block in `configs/model_config.yaml` with
+- [x] Replace the legacy `frequency` block in `configs/model_config.yaml` with
       the selected Bayar+SRM frontend, shallow backbone, 256 output dimensions,
       and the canonical shared 512-resize preprocessing contract.
 - [x] Retain the trained concat+linear `FeatureFusion -> [B, 512]` architecture
@@ -129,21 +128,21 @@ authoritative for the published final weights.
 - [x] `train_bayar_srm.py` trains the Bayar+SRM forensic candidate through the
       same native-crop data path and writes distinct stream/head checkpoints for
       comparison with NPR.
-- [ ] Add a self-describing final checkpoint bundle/manifest (complete fused
+- [x] Add a self-describing final checkpoint bundle/manifest (complete fused
       detector state, topology, selected frontend and backbone, feature
       dimensions, 512 resize/interpolation and normalization policy, forensic
       pixel range, threshold, model identity, schema version, and source-file
       hashes). Bundle the semantic, Bayar+SRM, fusion, and classifier states;
       standalone files remain provenance artifacts.
-- [ ] Add a canonical fused detector under `src/models/` with explicit
+- [x] Add a canonical fused detector under `src/models/` with explicit
       `semantic_dim=1024`, `forensic_dim=256`, and `fused_dim=512`; return raw
       logits from `forward()` without internal `no_grad` or sigmoid behavior.
-- [ ] Replace the provisional `predict.py`-local wrapper and obsolete
+- [x] Replace the provisional `predict.py`-local wrapper and obsolete
       `DetectorPipeline` path with one raw-image preparation path that performs
       a deterministic 512x512 resize once, derives normalized semantic and raw
       forensic tensors from the same pixels, and then calculates the fused
       logit. Do not retain the current separate 256x256 forensic resize.
-- [ ] Verify strict loading and numerical parity between the published
+- [x] Verify strict loading and numerical parity between the published
       three-file checkpoint and the self-describing bundle. Retraining or
       native-crop/top-k aggregation is out of scope for these final weights.
 

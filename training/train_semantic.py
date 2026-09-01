@@ -7,13 +7,13 @@ repo root as:
     python -m training.train_semantic --config configs/base_config.yaml
 
 Trains SemanticStream + a small standalone classifier head (NOT the fused
-DetectorPipeline -- fusion.py/frequency_stream.py aren't touched here), using
+DetectorPipeline -- fusion.py/npr_stream.py aren't touched here), using
 the shared augmentation/data pipeline, and saves a checkpoint. This is a real,
 runnable MOCK: the loop is real (forward/backward/optimizer + checkpoint
 save), but SemanticStream is still the pool+linear stub, so the saved weights
 aren't meaningful yet -- see TODO.md SS3.
 
-Deliberately self-contained (no shared module with train_frequency.py) so two
+Deliberately self-contained (no shared module with train_npr.py) so two
 teammates can iterate on a stream each without touching the same file.
 """
 

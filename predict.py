@@ -34,7 +34,6 @@ from src.models.fused_detector import (
     prepare_fused_inputs,
 )
 
-
 VALID_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 EXPLANATION_METHODS = (
     "none", "semantic-gradcam", "forensic-gradcam", "intermediates", "attention",

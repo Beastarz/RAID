@@ -177,7 +177,11 @@ class CanonicalFusedDetector(nn.Module):
         self.fusion = (
             fusion
             if fusion is not None
-            else FeatureFusion(semantic_dim=SEMANTIC_DIM, freq_dim=FORENSIC_DIM, fused_dim=FUSED_DIM)
+            else FeatureFusion(
+                semantic_dim=SEMANTIC_DIM,
+                forensic_dim=FORENSIC_DIM,
+                fused_dim=FUSED_DIM,
+            )
         )
         self.classifier = (
             classifier
