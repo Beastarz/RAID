@@ -84,7 +84,13 @@ class DetectorExplainabilityAdapter:
         source_dir: str | Path | None = None,
     ) -> None:
         try:
-            self.device = torch.device(device)
+            resolved_device = torch.device(device)
+            if resolved_device.type == "cuda" and resolved_device.index is None:
+                # A bare "cuda" device normalizes to "cuda:0" once a tensor is
+                # actually moved onto it via .to(); resolve the index up front
+                # so later device equality checks compare like with like.
+                resolved_device = torch.device("cuda", torch.cuda.current_device())
+            self.device = resolved_device
         except (TypeError, RuntimeError, ValueError) as exc:
             raise BundleValidationError(f"invalid adapter device {device!r}") from exc
         model, manifest = load_checkpoint_bundle(
